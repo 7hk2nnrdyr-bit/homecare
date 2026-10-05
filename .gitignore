@@ -1,0 +1,6 @@
+# .NET のビルド結果
+bin/
+obj/
+
+# macOS
+.DS_Store

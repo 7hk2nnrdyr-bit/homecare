@@ -1,0 +1,5 @@
+{
+    "name": "HomeCare.Core",
+    "rootNamespace": "HomeCare.Core",
+    "noEngineReferences": true
+}
