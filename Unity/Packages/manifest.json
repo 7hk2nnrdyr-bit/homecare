@@ -1,5 +1,6 @@
 {
   "dependencies": {
+    "com.homecare.core": "file:../../core",
     "com.unity.feature.development": "1.0.2",
     "com.unity.ide.rider": "3.0.40",
     "com.unity.inputsystem": "1.20.0",

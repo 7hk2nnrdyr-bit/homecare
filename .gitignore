@@ -5,25 +5,25 @@ obj/
 # macOS
 .DS_Store
 
-# Unity（unity/ フォルダ）：Unityが自動で作り直すファイルはGitに入れない
-/unity/[Ll]ibrary/
-/unity/[Tt]emp/
-/unity/[Oo]bj/
-/unity/[Bb]uild/
-/unity/[Bb]uilds/
-/unity/[Ll]ogs/
-/unity/[Uu]ser[Ss]ettings/
-/unity/[Mm]emoryCaptures/
-/unity/[Rr]ecordings/
-/unity/.utmp/
-/unity/*.csproj
-/unity/*.sln
-/unity/*.slnx
-/unity/.vs/
-/unity/.vscode/
-/unity/*.apk
-/unity/*.aab
-/unity/*.pidb
-/unity/*.unityproj
-/unity/sysinfo.txt
-/unity/crashlytics-buildid.txt
+# Unity（Unity/ フォルダ）：Unityが自動で作り直すファイルはGitに入れない
+/[Uu]nity/[Ll]ibrary/
+/[Uu]nity/[Tt]emp/
+/[Uu]nity/[Oo]bj/
+/[Uu]nity/[Bb]uild/
+/[Uu]nity/[Bb]uilds/
+/[Uu]nity/[Ll]ogs/
+/[Uu]nity/[Uu]ser[Ss]ettings/
+/[Uu]nity/[Mm]emoryCaptures/
+/[Uu]nity/[Rr]ecordings/
+/[Uu]nity/.utmp/
+/[Uu]nity/*.csproj
+/[Uu]nity/*.sln
+/[Uu]nity/*.slnx
+/[Uu]nity/.vs/
+/[Uu]nity/.vscode/
+/[Uu]nity/*.apk
+/[Uu]nity/*.aab
+/[Uu]nity/*.pidb
+/[Uu]nity/*.unityproj
+/[Uu]nity/sysinfo.txt
+/[Uu]nity/crashlytics-buildid.txt
