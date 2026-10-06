@@ -1,7 +1,6 @@
 using System.Collections.Generic;
 using HomeCare.Core.Data;
 using HomeCare.Core.Spatial;
-using Unity.XR.CoreUtils;
 using UnityEngine;
 using UnityEngine.XR.ARFoundation;
 using UnityEngine.XR.ARSubsystems;
@@ -12,13 +11,11 @@ namespace HomeCare.App
     /// 印刷した画像マーカーをカメラで見つけて、部屋の座標系を作る。
     /// マーカーがもう一度映るたびに位置を補正し、少しずつずれるのを防ぐ。
     /// どのマーカーがどの部屋の基準点かは、SetLocalizers で受け取る。
+    /// マーカーを探す部品（AR Tracked Image Manager）は、XR Origin に付けておく。
+    /// アプリの起動と同時にマーカーを探し始める必要があるため、実行中に後から付けるのではなく、最初から付けておく。
     /// </summary>
     public class ImageMarkerRoomLocalizer : RoomLocalizer
     {
-        [Tooltip("アプリが探すマーカー画像の一覧（Reference Image Library）。")]
-        [SerializeField]
-        XRReferenceImageLibrary m_Library;
-
         // マーカー番号 → そのマーカーがある部屋と、部屋の座標のどこにあるか
         readonly Dictionary<string, (string roomId, HomeCare.Core.Spatial.Pose inRoom)> m_Markers =
             new Dictionary<string, (string, HomeCare.Core.Spatial.Pose)>();
@@ -30,25 +27,11 @@ namespace HomeCare.App
 
         void Start()
         {
-            var origin = FindAnyObjectByType<XROrigin>();
-            if (origin == null || m_Library == null)
-            {
-                Debug.LogWarning("[HomeCare] XR Origin かマーカー画像の一覧が見つからないため、マーカーを探せません。");
-                return;
-            }
-
-            // 画像を探す部品は XR Origin に付ける。付けた直後は画像の一覧が無いので自動で止まるため、
-            // 一覧を渡してから動かす。
-            m_Manager = origin.GetComponent<ARTrackedImageManager>();
+            m_Manager = FindAnyObjectByType<ARTrackedImageManager>();
             if (m_Manager == null)
             {
-                m_Manager = origin.gameObject.AddComponent<ARTrackedImageManager>();
+                Debug.LogWarning("[HomeCare] XR Origin に AR Tracked Image Manager が無いため、マーカーを探せません。");
             }
-            if (m_Manager.referenceLibrary == null)
-            {
-                m_Manager.referenceLibrary = m_Library;
-            }
-            m_Manager.enabled = true;
         }
 
         public override void SetLocalizers(string roomId, IEnumerable<LocalizerData> localizers)

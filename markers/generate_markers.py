@@ -94,7 +94,8 @@ def main(ids):
     UNITY_DIR.mkdir(parents=True, exist_ok=True)
     for marker_id in ids:
         pattern = draw_pattern(marker_id)
-        pattern.save(UNITY_DIR / f"{marker_id}.png", optimize=True)
+        # 白黒1チャンネルの画像はUnityが透明度として読み込むことがあるので、RGBで保存する
+        pattern.convert("RGB").save(UNITY_DIR / f"{marker_id}.png", optimize=True)
         make_print_pdf(marker_id, pattern, PRINT_DIR / f"{marker_id}-print.pdf")
         print(f"{marker_id}: 作成しました")
 

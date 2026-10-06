@@ -3994,7 +3994,6 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 38d77d1e74ae4cd19ea0482bb63ba8fd, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::HomeCare.App.ImageMarkerRoomLocalizer
-  m_Library: {fileID: 11400000, guid: 2507e140fcf540efa2c3ea25cdd45dcd, type: 2}
 --- !u!4 &1043109988
 Transform:
   m_ObjectHideFlags: 0
