@@ -14,4 +14,5 @@ MonoBehaviour:
   m_EditorClassIdentifier: 
   m_EnvironmentPrefabPaths:
   - Packages/com.unity.xr.arfoundation/Assets/Prefabs/DefaultSimulationEnvironment.prefab
+  - Assets/HomeCare/Simulation/HomeCareSimulationEnvironment.prefab
   m_FallbackAtEndOfList: 1

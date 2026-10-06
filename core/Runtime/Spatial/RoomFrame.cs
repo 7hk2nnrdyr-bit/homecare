@@ -15,10 +15,10 @@ namespace HomeCare.Core.Spatial
     public readonly struct RoomFrame
     {
         /// <summary>
-        /// 向きを決める軸がこれより水平から外れていたら、もう一方の軸で向きを決める。
-        /// （0.5 = 水平から約60度以上傾いている）
+        /// マーカー面の向き（Y軸）と真上との角度が45度より小さければ「水平に置いた」、
+        /// それ以上なら「壁に貼った」とみなす。値は cos(45度)。
         /// </summary>
-        private const float MinHorizontalLength = 0.5f;
+        private const float FlatThreshold = 0.70710678f;
 
         /// <summary>部屋の原点のワールド座標。</summary>
         public Vec3 Origin { get; }
@@ -58,21 +58,18 @@ namespace HomeCare.Core.Spatial
 
         /// <summary>
         /// 傾きから水平方向の向き（Yaw）を取り出す。
-        /// 基本は前方向（Z軸）を使う。床に置いたマーカーはこれで決まる。
-        /// Z軸がほぼ真上・真下を向いているとき（壁に貼ったマーカー）は、
-        /// 面の向き（Y軸、壁から部屋側）で決める。
+        /// ARのマーカーは、画像の面の向きがY軸、画像の上辺の向きがZ軸。
+        /// ・水平に置いたマーカー（床・棚の上・天井）：画像の上辺の向き（Z軸）で決める
+        /// ・壁に貼ったマーカー：面の向き（Y軸、壁から部屋側）で決める
         /// </summary>
         private static float HeadingOf(Quat rotation)
         {
-            var forward = rotation.Rotate(Vec3.Forward);
-            if (HorizontalLength(forward) < MinHorizontalLength)
-            {
-                forward = rotation.Rotate(Vec3.Up);
-            }
-            return MathF.Atan2(forward.X, forward.Z);
+            var normal = rotation.Rotate(Vec3.Up);
+            var heading = MathF.Abs(normal.Y) >= FlatThreshold
+                ? rotation.Rotate(Vec3.Forward)
+                : normal;
+            return MathF.Atan2(heading.X, heading.Z);
         }
-
-        private static float HorizontalLength(Vec3 v) => MathF.Sqrt(v.X * v.X + v.Z * v.Z);
 
         /// <summary>真上の軸のまわりに回す（Unityと同じ向き：正の角度で上から見て時計回り）。</summary>
         private static Vec3 RotateY(Vec3 v, float radians)

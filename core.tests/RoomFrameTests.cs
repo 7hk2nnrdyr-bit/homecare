@@ -54,6 +54,36 @@ namespace HomeCare.Core.Tests
         }
 
         [Fact]
+        public void 面の傾きが45度より小さければ水平に置いたマーカーとして上辺の向きを使う()
+        {
+            // 前後の軸（Z）のまわりに40度傾ける：面の向きは左上を向くが、上辺は+Zのまま
+            var leaning = Quat.AngleAxis(40f, Vec3.Forward);
+            var frame = RoomFrame.FromObservedPose(MarkerAt(Vec3.Zero, leaning), Pose.Identity);
+
+            AssertClose(new Vec3(0f, 0f, 1f), frame.RoomToWorld(new Vec3(0f, 0f, 1f)));
+        }
+
+        [Fact]
+        public void 面の傾きが45度以上なら壁に貼ったマーカーとして面の向きを使う()
+        {
+            // 同じ軸で50度傾ける：面の向きは左（-X）寄りになる
+            var leaning = Quat.AngleAxis(50f, Vec3.Forward);
+            var frame = RoomFrame.FromObservedPose(MarkerAt(Vec3.Zero, leaning), Pose.Identity);
+
+            AssertClose(new Vec3(-1f, 0f, 0f), frame.RoomToWorld(new Vec3(0f, 0f, 1f)));
+        }
+
+        [Fact]
+        public void 天井に下向きに貼ったマーカーも上辺の向きを使う()
+        {
+            // 左右の軸（X）のまわりに180度回す：面は真下、上辺は-Zを向く
+            var onCeiling = Quat.AngleAxis(180f, Right);
+            var frame = RoomFrame.FromObservedPose(MarkerAt(Vec3.Zero, onCeiling), Pose.Identity);
+
+            AssertClose(new Vec3(0f, 0f, -1f), frame.RoomToWorld(new Vec3(0f, 0f, 1f)));
+        }
+
+        [Fact]
         public void ワールドから部屋に変換して戻すと元の位置になる()
         {
             var frame = new RoomFrame(new Vec3(1f, 0f, -2f), 0.7f);
