@@ -117,7 +117,9 @@ namespace HomeCare.App
                 {
                     if (m_Markers.TryGetValue(point.id, out var renderer))
                     {
-                        renderer.transform.position = WorldPositionOf(point, frame);
+                        renderer.transform.SetPositionAndRotation(
+                            WorldPositionOf(point, frame),
+                            frame.RoomToWorld(DataFormat.ToQuat(point.rotationInRoom)).ToUnity());
                     }
                 }
             }
@@ -214,13 +216,14 @@ namespace HomeCare.App
 
             var world = spawned.transform.position;
             var inRoom = frame.WorldToRoom(world.ToCore());
+            var rotationInRoom = frame.WorldToRoom(spawned.transform.rotation.ToCore());
 
             // 入力中に画面をタップしても、物が置かれないようにする
             SetSpawnEnabled(false);
             m_Form.Open(
                 input =>
                 {
-                    var point = m_Editor.AddPoint(m_Room.id, input.PointName, inRoom);
+                    var point = m_Editor.AddPoint(m_Room.id, input.PointName, inRoom, rotationInRoom);
                     m_Editor.AddTask(point.id, input.TaskTitle, input.Recurrence, input.FirstDueDate);
                     if (TrySave())
                     {

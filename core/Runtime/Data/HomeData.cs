@@ -71,6 +71,9 @@ namespace HomeCare.Core.Data
         public string roomId;
         public string name;
         public float[] positionInRoom = new float[3];
+
+        /// <summary>部屋の座標での向き（クォータニオン x, y, z, w）。今の球には向きは無いが、ラベルやアイコンのために持つ。</summary>
+        public float[] rotationInRoom = { 0f, 0f, 0f, 1f };
         public string icon;
         public string createdAt;
         public string updatedAt;

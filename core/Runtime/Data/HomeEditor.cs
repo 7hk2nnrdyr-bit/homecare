@@ -28,6 +28,13 @@ namespace HomeCare.Core.Data
             {
                 room.localizers = room.localizers ?? new List<LocalizerData>();
             }
+            foreach (var point in Home.points)
+            {
+                if (point.rotationInRoom == null || point.rotationInRoom.Length != 4)
+                {
+                    point.rotationInRoom = DataFormat.ToArray(Quat.Identity);
+                }
+            }
             _utcNow = utcNow ?? (() => DateTime.UtcNow);
         }
 
@@ -85,7 +92,7 @@ namespace HomeCare.Core.Data
 
         public IEnumerable<LocalizerData> LocalizersOf(string roomId) => RequireRoom(roomId).localizers;
 
-        public PointData AddPoint(string roomId, string name, Vec3 positionInRoom)
+        public PointData AddPoint(string roomId, string name, Vec3 positionInRoom, Quat? rotationInRoom = null)
         {
             RequireRoom(roomId);
             var now = Now();
@@ -95,6 +102,7 @@ namespace HomeCare.Core.Data
                 roomId = roomId,
                 name = name,
                 positionInRoom = DataFormat.ToArray(positionInRoom),
+                rotationInRoom = DataFormat.ToArray(rotationInRoom ?? Quat.Identity),
                 createdAt = now,
                 updatedAt = now,
             };

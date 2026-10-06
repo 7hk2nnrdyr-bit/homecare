@@ -84,6 +84,18 @@ namespace HomeCare.Core.Tests
         }
 
         [Fact]
+        public void 向きも部屋の座標に変換して戻すと元の向きになる()
+        {
+            var frame = RoomFrame.FromObservedPose(MarkerAt(Vec3.Zero, Quat.AngleAxis(30f, Vec3.Up)), Pose.Identity);
+            var world = Quat.AngleAxis(75f, Vec3.Up) * Quat.AngleAxis(20f, Right);
+
+            var inRoom = frame.WorldToRoom(world);
+            AssertClose(Quat.AngleAxis(45f, Vec3.Up).Rotate(Quat.AngleAxis(20f, Right).Rotate(Vec3.Forward)),
+                inRoom.Rotate(Vec3.Forward));
+            AssertClose(world.Rotate(Vec3.Forward), frame.RoomToWorld(inRoom).Rotate(Vec3.Forward));
+        }
+
+        [Fact]
         public void ワールドから部屋に変換して戻すと元の位置になる()
         {
             var frame = new RoomFrame(new Vec3(1f, 0f, -2f), 0.7f);

@@ -56,6 +56,14 @@ namespace HomeCare.Core.Spatial
         /// <summary>部屋の座標 → ワールド座標。</summary>
         public Vec3 RoomToWorld(Vec3 room) => Origin + RotateY(room, YawRadians);
 
+        /// <summary>ワールドでの向き → 部屋の座標での向き。</summary>
+        public Quat WorldToRoom(Quat world) => Quat.AngleAxis(-YawDegrees, Vec3.Up) * world;
+
+        /// <summary>部屋の座標での向き → ワールドでの向き。</summary>
+        public Quat RoomToWorld(Quat room) => Quat.AngleAxis(YawDegrees, Vec3.Up) * room;
+
+        private float YawDegrees => YawRadians * 180f / MathF.PI;
+
         /// <summary>
         /// 傾きから水平方向の向き（Yaw）を取り出す。
         /// ARのマーカーは、画像の面の向きがY軸、画像の上辺の向きがZ軸。

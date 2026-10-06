@@ -16,6 +16,9 @@ namespace HomeCare.App
         HomeEditor m_Editor;
         Vector2 m_Scroll;
         string m_PendingCompleteTaskId;
+        Action m_PendingTransfer;
+        bool m_ShowTransfer;
+        string m_TransferMessage;
 
         void Awake()
         {
@@ -31,7 +34,14 @@ namespace HomeCare.App
 
         void Update()
         {
-            // 画面を描いている途中で並び順が変わらないよう、完了の記録は描画の外で行う
+            // 画面を描いている途中で中身が変わらないよう、完了の記録やデータの受け渡しは描画の外で行う
+            if (m_PendingTransfer != null)
+            {
+                var transfer = m_PendingTransfer;
+                m_PendingTransfer = null;
+                transfer();
+            }
+
             if (m_PendingCompleteTaskId == null)
             {
                 return;
@@ -69,6 +79,15 @@ namespace HomeCare.App
                 AppScenes.OpenCamera();
             }
 
+            if (GUILayout.Button(m_ShowTransfer ? "データの受け渡し ▲" : "データの受け渡し ▼", GUILayout.Height(32f)))
+            {
+                m_ShowTransfer = !m_ShowTransfer;
+            }
+            if (m_ShowTransfer)
+            {
+                DrawTransfer();
+            }
+
             if (items.Count == 0)
             {
                 GUILayout.Label("まだ何も登録されていません。「カメラで見る」から、場所とやることを登録しましょう。");
@@ -100,6 +119,66 @@ namespace HomeCare.App
             }
             GUILayout.EndScrollView();
             GUILayout.EndArea();
+        }
+
+        void DrawTransfer()
+        {
+            GUILayout.BeginVertical(GUI.skin.box);
+            GUILayout.Label("ほかの端末と同じ家のデータを使うときに使います。");
+            if (GUILayout.Button("書き出す（ファイルとクリップボード）", GUILayout.Height(36f)))
+            {
+                m_PendingTransfer = Export;
+            }
+            if (GUILayout.Button("ファイルから読み込む", GUILayout.Height(36f)))
+            {
+                m_PendingTransfer = () => ApplyImport(HomeTransfer.ImportFromFile(m_Editor.Home));
+            }
+            if (GUILayout.Button("クリップボードから読み込む", GUILayout.Height(36f)))
+            {
+                m_PendingTransfer = () => ApplyImport(HomeTransfer.ImportFromClipboard(m_Editor.Home));
+            }
+#if UNITY_EDITOR
+            if (GUILayout.Button("（Unity）ファイルの場所を開く", GUILayout.Height(28f)))
+            {
+                Application.OpenURL("file://" + Application.persistentDataPath);
+            }
+#endif
+            if (!string.IsNullOrEmpty(m_TransferMessage))
+            {
+                GUILayout.Label(m_TransferMessage);
+            }
+            GUILayout.EndVertical();
+        }
+
+        void Export()
+        {
+            try
+            {
+                m_TransferMessage = HomeTransfer.Export(m_Editor.Home);
+            }
+            catch (Exception e)
+            {
+                m_TransferMessage = $"書き出せませんでした：{e.Message}";
+            }
+            Debug.Log($"[HomeCare] {m_TransferMessage}");
+        }
+
+        void ApplyImport(ImportResult result)
+        {
+            m_TransferMessage = result.Message;
+            if (result.Outcome != ImportOutcome.Rejected)
+            {
+                try
+                {
+                    m_Repository.Save(result.Home);
+                    m_Editor = new HomeEditor(result.Home);
+                }
+                catch (Exception e)
+                {
+                    m_TransferMessage = $"保存に失敗しました：{e.Message}";
+                }
+            }
+            Debug.Log($"[HomeCare] {m_TransferMessage}");
         }
 
         static string PlaceOf(DueItem item)
