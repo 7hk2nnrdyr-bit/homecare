@@ -20,6 +20,9 @@ namespace HomeCare.Core.Data
         public List<RoomData> rooms = new List<RoomData>();
         public List<PointData> points = new List<PointData>();
         public List<TaskData> tasks = new List<TaskData>();
+
+        /// <summary>実施記録。追記だけで、書き換えはしない。</summary>
+        public List<CompletionData> completions = new List<CompletionData>();
     }
 
     /// <summary>部屋。基準点（localizers）は、マーカーを入れる段階で追加する。</summary>
@@ -65,6 +68,25 @@ namespace HomeCare.Core.Data
         public string createdAt;
         public string updatedAt;
         public string deletedAt;
+    }
+
+    /// <summary>
+    /// 実施記録（完了ボタンを押した記録）。
+    /// 家族2人がほぼ同時に完了しても記録が2件残るだけで、データは壊れない。
+    /// </summary>
+    [Serializable]
+    public class CompletionData
+    {
+        public string id;
+        public string taskId;
+
+        /// <summary>実施した日（"2026-10-06" の形）。</summary>
+        public string doneDate;
+
+        /// <summary>実施した人。ログインを入れるまでは空。</summary>
+        public string doneByUid;
+        public string note;
+        public string createdAt;
     }
 
     /// <summary>周期。例：3か月ごと = { every: 3, unit: "month" }</summary>

@@ -19,6 +19,11 @@ namespace HomeCare.Core.Data
         public HomeEditor(HomeData home, Func<DateTime> utcNow = null)
         {
             Home = home ?? throw new ArgumentNullException(nameof(home));
+            // 古い版のファイルには無い一覧もあるので、空の一覧で補う
+            Home.rooms = Home.rooms ?? new List<RoomData>();
+            Home.points = Home.points ?? new List<PointData>();
+            Home.tasks = Home.tasks ?? new List<TaskData>();
+            Home.completions = Home.completions ?? new List<CompletionData>();
             _utcNow = utcNow ?? (() => DateTime.UtcNow);
         }
 
@@ -67,7 +72,7 @@ namespace HomeCare.Core.Data
 
         public TaskData AddTask(string pointId, string title, Recurrence recurrence, DateTime firstDueDate)
         {
-            var point = Home.points.FirstOrDefault(p => p.id == pointId && string.IsNullOrEmpty(p.deletedAt))
+            var point = FindPoint(pointId)
                 ?? throw new ArgumentException($"ポイントが見つかりません: {pointId}", nameof(pointId));
             var now = Now();
             var task = new TaskData
@@ -84,6 +89,44 @@ namespace HomeCare.Core.Data
             Home.tasks.Add(task);
             return task;
         }
+
+        /// <summary>
+        /// タスクを完了する。実施記録を1件追加し、前回実施日を更新する。
+        /// 次回期限は前回実施日から計算し直される（NextDueDate）。
+        /// </summary>
+        public CompletionData CompleteTask(string taskId, DateTime doneDate)
+        {
+            var task = FindTask(taskId)
+                ?? throw new ArgumentException($"タスクが見つかりません: {taskId}", nameof(taskId));
+            var now = Now();
+            var completion = new CompletionData
+            {
+                id = NewId(),
+                taskId = taskId,
+                doneDate = DataFormat.FormatDate(doneDate),
+                createdAt = now,
+            };
+            Home.completions.Add(completion);
+
+            // 過去の日付で記録したときに、より新しい前回実施日を巻き戻さない
+            var lastDone = DataFormat.ParseDate(task.lastDoneDate);
+            if (lastDone == null || doneDate.Date > lastDone.Value)
+            {
+                task.lastDoneDate = DataFormat.FormatDate(doneDate);
+            }
+            task.updatedAt = now;
+            return completion;
+        }
+
+        public PointData FindPoint(string pointId) =>
+            Home.points.FirstOrDefault(p => p.id == pointId && string.IsNullOrEmpty(p.deletedAt));
+
+        public TaskData FindTask(string taskId) =>
+            Home.tasks.FirstOrDefault(t => t.id == taskId && string.IsNullOrEmpty(t.deletedAt));
+
+        /// <summary>タスクの実施記録。新しい順。</summary>
+        public IEnumerable<CompletionData> CompletionsOf(string taskId) =>
+            Home.completions.Where(c => c.taskId == taskId).OrderByDescending(c => c.doneDate);
 
         public IEnumerable<RoomData> ActiveRooms() =>
             Home.rooms.Where(r => string.IsNullOrEmpty(r.deletedAt)).OrderBy(r => r.sortOrder);

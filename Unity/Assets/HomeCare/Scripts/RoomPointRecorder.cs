@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using HomeCare.Core.Data;
 using HomeCare.Core.Scheduling;
 using UnityEngine;
+using UnityEngine.InputSystem;
 using UnityEngine.XR.Interaction.Toolkit.Samples.ARStarterAssets;
 using UnityEngine.XR.Interaction.Toolkit.Samples.StarterAssets;
 
@@ -12,6 +13,7 @@ namespace HomeCare.App
     /// タップで物が置かれたら入力画面を出し、名前・やること・周期とともに、
     /// 位置を部屋の座標に変換してファイルに保存する。
     /// 起動したときは、保存してあるポイントを同じ場所に、期限の状態の色（赤・黄・緑）の球で表示する。
+    /// 球をタップすると詳細を開き、完了を記録できる。
     /// </summary>
     public class RoomPointRecorder : MonoBehaviour
     {
@@ -37,11 +39,12 @@ namespace HomeCare.App
 
         JsonFileHomeRepository m_Repository;
         PointForm m_Form;
+        PointDetailView m_Detail;
         ARInteractorSpawnTrigger m_SpawnTrigger;
         HomeEditor m_Editor;
         RoomData m_Room;
         bool m_Restored;
-        readonly List<GameObject> m_Markers = new List<GameObject>();
+        readonly Dictionary<string, Renderer> m_Markers = new Dictionary<string, Renderer>();
 
         void Awake()
         {
@@ -52,6 +55,11 @@ namespace HomeCare.App
             if (m_Form == null)
             {
                 m_Form = gameObject.AddComponent<PointForm>();
+            }
+            m_Detail = GetComponent<PointDetailView>();
+            if (m_Detail == null)
+            {
+                m_Detail = gameObject.AddComponent<PointDetailView>();
             }
             m_SpawnTrigger = FindAnyObjectByType<ARInteractorSpawnTrigger>();
             Debug.Log($"[HomeCare] 保存先：{m_Repository.FilePath}");
@@ -85,16 +93,70 @@ namespace HomeCare.App
                 foreach (var point in m_Editor.PointsInRoom(m_Room.id))
                 {
                     var world = frame.RoomToWorld(DataFormat.ToVec3(point.positionInRoom)).ToUnity();
-                    m_Markers.Add(CreateMarker(point, world));
+                    CreateMarker(point, world);
                 }
                 m_Restored = true;
                 Debug.Log($"[HomeCare] 保存してあるポイント{m_Markers.Count}個を表示しました（部屋「{m_Room.name}」）。");
+            }
+
+            // 球をタップしたら詳細を開く
+            var pointer = Pointer.current;
+            if (pointer != null && pointer.press.wasPressedThisFrame && !IsAnyViewOpen()
+                && TryGetTappedMarker(pointer.position.ReadValue(), out var marker))
+            {
+                OpenDetail(marker.PointId);
+            }
+        }
+
+        bool IsAnyViewOpen() => m_Form.IsOpen || m_Detail.IsOpen;
+
+        static bool TryGetTappedMarker(Vector2 screenPosition, out PointMarker marker)
+        {
+            marker = null;
+            var camera = Camera.main;
+            if (camera == null)
+            {
+                return false;
+            }
+            var ray = camera.ScreenPointToRay(screenPosition);
+            if (Physics.Raycast(ray, out var hit, 20f))
+            {
+                marker = hit.collider.GetComponent<PointMarker>();
+            }
+            return marker != null;
+        }
+
+        void OpenDetail(string pointId)
+        {
+            SetSpawnEnabled(false);
+            m_Detail.Open(m_Editor, pointId, taskId => CompleteTask(pointId, taskId), EnableSpawnSoon);
+        }
+
+        void CompleteTask(string pointId, string taskId)
+        {
+            var task = m_Editor.FindTask(taskId);
+            m_Editor.CompleteTask(taskId, DateTime.Today);
+            try
+            {
+                m_Repository.Save(m_Editor.Home);
+                Debug.Log($"[HomeCare] 「{task.title}」を完了しました。次回期限：{DataFormat.FormatDate(HomeEditor.NextDueDate(task))}");
+            }
+            catch (Exception e)
+            {
+                Debug.LogError($"[HomeCare] 保存に失敗しました：{e.Message}");
+            }
+            if (m_Markers.TryGetValue(pointId, out var renderer))
+            {
+                renderer.material.color = ColorOf(m_Editor.StatusOfPoint(pointId, DateTime.Today));
             }
         }
 
         void OnObjectSpawned(GameObject spawned)
         {
-            if (m_Form.IsOpen)
+            // 入力中・詳細表示中や、球をタップしたときは、新しいポイントにしない
+            var pointer = Pointer.current;
+            if (IsAnyViewOpen()
+                || (pointer != null && TryGetTappedMarker(pointer.position.ReadValue(), out _)))
             {
                 Destroy(spawned);
                 return;
@@ -119,7 +181,7 @@ namespace HomeCare.App
                     try
                     {
                         m_Repository.Save(m_Editor.Home);
-                        m_Markers.Add(CreateMarker(point, world));
+                        CreateMarker(point, world);
                         Debug.Log($"[HomeCare] 「{point.name}：{input.TaskTitle}」を保存：部屋「{m_Room.name}」の座標 {inRoom}");
                     }
                     catch (Exception e)
@@ -149,16 +211,18 @@ namespace HomeCare.App
             }
         }
 
-        GameObject CreateMarker(PointData point, Vector3 worldPosition)
+        void CreateMarker(PointData point, Vector3 worldPosition)
         {
             var marker = GameObject.CreatePrimitive(PrimitiveType.Sphere);
             marker.name = $"Point: {point.name}";
             marker.transform.position = worldPosition;
             marker.transform.localScale = Vector3.one * m_MarkerSize;
-            // タップの邪魔にならないよう、当たり判定は外す
-            Destroy(marker.GetComponent<Collider>());
-            marker.GetComponent<Renderer>().material.color = ColorOf(m_Editor.StatusOfPoint(point.id, DateTime.Today));
-            return marker;
+            // 小さい球でもタップしやすいよう、当たり判定は見た目の3倍の大きさにする
+            marker.GetComponent<SphereCollider>().radius = 1.5f;
+            marker.AddComponent<PointMarker>().PointId = point.id;
+            var renderer = marker.GetComponent<Renderer>();
+            renderer.material.color = ColorOf(m_Editor.StatusOfPoint(point.id, DateTime.Today));
+            m_Markers[point.id] = renderer;
         }
 
         /// <summary>タスクが無いポイントは白にする。</summary>
