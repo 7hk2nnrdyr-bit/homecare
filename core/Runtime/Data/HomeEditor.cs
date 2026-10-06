@@ -24,6 +24,10 @@ namespace HomeCare.Core.Data
             Home.points = Home.points ?? new List<PointData>();
             Home.tasks = Home.tasks ?? new List<TaskData>();
             Home.completions = Home.completions ?? new List<CompletionData>();
+            foreach (var room in Home.rooms)
+            {
+                room.localizers = room.localizers ?? new List<LocalizerData>();
+            }
             _utcNow = utcNow ?? (() => DateTime.UtcNow);
         }
 
@@ -52,6 +56,34 @@ namespace HomeCare.Core.Data
         /// <summary>名前の一致する部屋を返す。無ければ作る。</summary>
         public RoomData FindOrAddRoom(string name) =>
             ActiveRooms().FirstOrDefault(r => r.name == name) ?? AddRoom(name);
+
+        /// <summary>
+        /// 部屋にマーカーの基準点を追加する。最初のマーカーは原点（位置0・向き0）に置く。
+        /// 同じマーカーを2つの部屋で使うと、どちらの部屋か区別できないので断る。
+        /// </summary>
+        public LocalizerData AddMarkerLocalizer(string roomId, string markerId, Vec3 positionInRoom, float yawDeg)
+        {
+            var room = RequireRoom(roomId);
+            var usedBy = ActiveRooms().FirstOrDefault(r => r.localizers.Any(l => l.markerId == markerId));
+            if (usedBy != null)
+            {
+                throw new ArgumentException($"マーカー{markerId}は、すでに部屋「{usedBy.name}」で使っています。", nameof(markerId));
+            }
+            var now = Now();
+            var localizer = new LocalizerData
+            {
+                id = NewId(),
+                markerId = markerId,
+                positionInRoom = DataFormat.ToArray(positionInRoom),
+                yawDeg = yawDeg,
+                createdAt = now,
+            };
+            room.localizers.Add(localizer);
+            room.updatedAt = now;
+            return localizer;
+        }
+
+        public IEnumerable<LocalizerData> LocalizersOf(string roomId) => RequireRoom(roomId).localizers;
 
         public PointData AddPoint(string roomId, string name, Vec3 positionInRoom)
         {
@@ -166,13 +198,9 @@ namespace HomeCare.Core.Data
             return worst;
         }
 
-        private void RequireRoom(string roomId)
-        {
-            if (!Home.rooms.Any(r => r.id == roomId && string.IsNullOrEmpty(r.deletedAt)))
-            {
-                throw new ArgumentException($"部屋が見つかりません: {roomId}", nameof(roomId));
-            }
-        }
+        private RoomData RequireRoom(string roomId) =>
+            Home.rooms.FirstOrDefault(r => r.id == roomId && string.IsNullOrEmpty(r.deletedAt))
+            ?? throw new ArgumentException($"部屋が見つかりません: {roomId}", nameof(roomId));
 
         private string Now() => DataFormat.FormatTimestamp(_utcNow());
 

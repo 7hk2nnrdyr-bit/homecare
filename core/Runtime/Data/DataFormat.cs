@@ -43,5 +43,9 @@ namespace HomeCare.Core.Data
         public static float[] ToArray(Vec3 v) => new[] { v.X, v.Y, v.Z };
 
         public static Vec3 ToVec3(float[] values) => new Vec3(values[0], values[1], values[2]);
+
+        /// <summary>基準点が部屋の座標のどこに、どの向きで置かれているか。</summary>
+        public static Pose ToPose(LocalizerData localizer) =>
+            new Pose(ToVec3(localizer.positionInRoom), Quat.AngleAxis(localizer.yawDeg, Vec3.Up));
     }
 }

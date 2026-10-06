@@ -1,3 +1,5 @@
+using System.Collections.Generic;
+using HomeCare.Core.Data;
 using HomeCare.Core.Spatial;
 using UnityEngine;
 
@@ -14,5 +16,13 @@ namespace HomeCare.App
         /// 部屋の座標系を取得する。基準点がまだ見つかっていなければ false を返す。
         /// </summary>
         public abstract bool TryGetRoomFrame(string roomId, out RoomFrame frame);
+
+        /// <summary>
+        /// 部屋の基準点の一覧を受け取る。マーカー版は、これで「どのマーカーがどの部屋か」を知る。
+        /// 基準点を使わない部品（モック版）は何もしない。
+        /// </summary>
+        public virtual void SetLocalizers(string roomId, IEnumerable<LocalizerData> localizers)
+        {
+        }
     }
 }

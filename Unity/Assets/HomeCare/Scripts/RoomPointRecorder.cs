@@ -1,7 +1,9 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using HomeCare.Core.Data;
 using HomeCare.Core.Scheduling;
+using HomeCare.Core.Spatial;
 using UnityEngine;
 using UnityEngine.InputSystem;
 using UnityEngine.XR.Interaction.Toolkit.Samples.ARStarterAssets;
@@ -12,7 +14,7 @@ namespace HomeCare.App
     /// <summary>
     /// タップで物が置かれたら入力画面を出し、名前・やること・周期とともに、
     /// 位置を部屋の座標に変換してファイルに保存する。
-    /// 起動したときは、保存してあるポイントを同じ場所に、期限の状態の色（赤・黄・緑）の球で表示する。
+    /// 部屋の位置合わせができたら、保存してあるポイントを同じ場所に、期限の状態の色（赤・黄・緑）の球で表示する。
     /// 球をタップすると詳細を開き、完了を記録できる。
     /// </summary>
     public class RoomPointRecorder : MonoBehaviour
@@ -21,13 +23,17 @@ namespace HomeCare.App
         [SerializeField]
         ObjectSpawner m_Spawner;
 
-        [Tooltip("部屋の座標系を返す部品。今は MockRoomLocalizer。")]
+        [Tooltip("部屋の座標系を返す部品。マーカー版（ImageMarkerRoomLocalizer）か、仮の MockRoomLocalizer。")]
         [SerializeField]
         RoomLocalizer m_Localizer;
 
         [Tooltip("ポイントを記録する部屋の名前。無ければ自動で作る。")]
         [SerializeField]
         string m_RoomName = "リビング";
+
+        [Tooltip("部屋に基準点がまだ無いとき、原点として登録するマーカー番号。")]
+        [SerializeField]
+        string m_OriginMarker = "M01";
 
         [Tooltip("保存してあるポイントを表示する球の直径（m）。")]
         [SerializeField]
@@ -51,6 +57,16 @@ namespace HomeCare.App
             m_Repository = new JsonFileHomeRepository();
             m_Editor = HomeEditor.LoadOrCreate(m_Repository, "わが家");
             m_Room = m_Editor.FindOrAddRoom(m_RoomName);
+            if (!m_Editor.LocalizersOf(m_Room.id).Any())
+            {
+                // 最初のマーカーを部屋の原点にする
+                m_Editor.AddMarkerLocalizer(m_Room.id, m_OriginMarker, Vec3.Zero, 0f);
+                TrySave();
+            }
+            if (m_Localizer != null)
+            {
+                m_Localizer.SetLocalizers(m_Room.id, m_Editor.LocalizersOf(m_Room.id));
+            }
             m_Form = GetComponent<PointForm>();
             if (m_Form == null)
             {
@@ -87,16 +103,27 @@ namespace HomeCare.App
 
         void Update()
         {
-            // 基準点が見つかった時点で一度だけ、保存してあるポイントを表示する
-            if (!m_Restored && m_Localizer != null && m_Localizer.TryGetRoomFrame(m_Room.id, out var frame))
+            if (m_Localizer != null && m_Localizer.TryGetRoomFrame(m_Room.id, out var frame))
             {
+                // 位置合わせができた時点で一度だけ、保存してあるポイントを表示する
+                if (!m_Restored)
+                {
+                    foreach (var point in m_Editor.PointsInRoom(m_Room.id))
+                    {
+                        CreateMarker(point, WorldPositionOf(point, frame));
+                    }
+                    m_Restored = true;
+                    Debug.Log($"[HomeCare] 保存してあるポイント{m_Markers.Count}個を表示しました（部屋「{m_Room.name}」）。");
+                }
+
+                // マーカーが映るたびに部屋の座標が補正されるので、球の位置も合わせ直す
                 foreach (var point in m_Editor.PointsInRoom(m_Room.id))
                 {
-                    var world = frame.RoomToWorld(DataFormat.ToVec3(point.positionInRoom)).ToUnity();
-                    CreateMarker(point, world);
+                    if (m_Markers.TryGetValue(point.id, out var renderer))
+                    {
+                        renderer.transform.position = WorldPositionOf(point, frame);
+                    }
                 }
-                m_Restored = true;
-                Debug.Log($"[HomeCare] 保存してあるポイント{m_Markers.Count}個を表示しました（部屋「{m_Room.name}」）。");
             }
 
             // 球をタップしたら詳細を開く
@@ -107,6 +134,22 @@ namespace HomeCare.App
                 OpenDetail(marker.PointId);
             }
         }
+
+        void OnGUI()
+        {
+            // 位置合わせができるまでは、マーカーを映すよう案内する
+            if (m_Localizer == null || m_Localizer.TryGetRoomFrame(m_Room.id, out _))
+            {
+                return;
+            }
+            var scale = Screen.dpi > 0 ? Mathf.Max(1f, Screen.dpi / 160f) : 1f;
+            GUI.matrix = Matrix4x4.Scale(new Vector3(scale, scale, 1f));
+            var width = Screen.width / scale;
+            GUI.Box(new Rect(10f, 40f, width - 20f, 30f), $"部屋のマーカー（{m_OriginMarker}）をカメラに映してください");
+        }
+
+        static Vector3 WorldPositionOf(PointData point, RoomFrame frame) =>
+            frame.RoomToWorld(DataFormat.ToVec3(point.positionInRoom)).ToUnity();
 
         bool IsAnyViewOpen() => m_Form.IsOpen || m_Detail.IsOpen;
 
@@ -136,14 +179,9 @@ namespace HomeCare.App
         {
             var task = m_Editor.FindTask(taskId);
             m_Editor.CompleteTask(taskId, DateTime.Today);
-            try
+            if (TrySave())
             {
-                m_Repository.Save(m_Editor.Home);
                 Debug.Log($"[HomeCare] 「{task.title}」を完了しました。次回期限：{DataFormat.FormatDate(HomeEditor.NextDueDate(task))}");
-            }
-            catch (Exception e)
-            {
-                Debug.LogError($"[HomeCare] 保存に失敗しました：{e.Message}");
             }
             if (m_Markers.TryGetValue(pointId, out var renderer))
             {
@@ -163,7 +201,7 @@ namespace HomeCare.App
             }
             if (m_Localizer == null || !m_Localizer.TryGetRoomFrame(m_Room.id, out var frame))
             {
-                Debug.LogWarning("[HomeCare] 部屋の基準点が見つからないため、位置を記録できません。");
+                Debug.LogWarning($"[HomeCare] まだ位置合わせができていないため、置けません。先にマーカー（{m_OriginMarker}）を映してください。");
                 Destroy(spawned);
                 return;
             }
@@ -178,15 +216,10 @@ namespace HomeCare.App
                 {
                     var point = m_Editor.AddPoint(m_Room.id, input.PointName, inRoom);
                     m_Editor.AddTask(point.id, input.TaskTitle, input.Recurrence, input.FirstDueDate);
-                    try
+                    if (TrySave())
                     {
-                        m_Repository.Save(m_Editor.Home);
                         CreateMarker(point, world);
                         Debug.Log($"[HomeCare] 「{point.name}：{input.TaskTitle}」を保存：部屋「{m_Room.name}」の座標 {inRoom}");
-                    }
-                    catch (Exception e)
-                    {
-                        Debug.LogError($"[HomeCare] 保存に失敗しました：{e.Message}");
                     }
                     Destroy(spawned);
                     EnableSpawnSoon();
@@ -196,6 +229,20 @@ namespace HomeCare.App
                     Destroy(spawned);
                     EnableSpawnSoon();
                 });
+        }
+
+        bool TrySave()
+        {
+            try
+            {
+                m_Repository.Save(m_Editor.Home);
+                return true;
+            }
+            catch (Exception e)
+            {
+                Debug.LogError($"[HomeCare] 保存に失敗しました：{e.Message}");
+                return false;
+            }
         }
 
         /// <summary>保存ボタンを押した指で物が置かれないよう、少し待ってから戻す。</summary>

@@ -25,16 +25,42 @@ namespace HomeCare.Core.Data
         public List<CompletionData> completions = new List<CompletionData>();
     }
 
-    /// <summary>部屋。基準点（localizers）は、マーカーを入れる段階で追加する。</summary>
+    /// <summary>部屋。基準点（localizers）を使って、ARの空間と部屋の座標を合わせる。</summary>
     [Serializable]
     public class RoomData
     {
         public string id;
         public string name;
         public int sortOrder;
+
+        /// <summary>基準点の一覧。1部屋1枚のマーカーが基本で、広い部屋では増やせる。</summary>
+        public List<LocalizerData> localizers = new List<LocalizerData>();
         public string createdAt;
         public string updatedAt;
         public string deletedAt;
+    }
+
+    /// <summary>
+    /// 部屋の基準点。今は印刷した画像マーカーだけ。
+    /// 将来クラウドアンカーを足すときも、この一覧に種類（type）を変えて入れる。
+    /// </summary>
+    [Serializable]
+    public class LocalizerData
+    {
+        public string id;
+
+        /// <summary>"marker"（印刷した画像マーカー）。</summary>
+        public string type = "marker";
+
+        /// <summary>マーカー番号（例："M01"）。アプリに入れた画像の名前と同じにする。</summary>
+        public string markerId;
+
+        /// <summary>基準点が部屋の座標のどこにあるか（メートル）。最初のマーカーは原点。</summary>
+        public float[] positionInRoom = new float[3];
+
+        /// <summary>基準点の水平方向の向き（度）。最初のマーカーは0。</summary>
+        public float yawDeg;
+        public string createdAt;
     }
 
     /// <summary>ARポイント。位置は部屋の座標（メートル）で持ち、マーカー番号は持たない。</summary>
