@@ -27,3 +27,11 @@ obj/
 /[Uu]nity/*.unityproj
 /[Uu]nity/sysinfo.txt
 /[Uu]nity/crashlytics-buildid.txt
+
+# Firebaseの接続設定（自分のプロジェクト専用。Unityのメニュー「HomeCare → Firebaseの設定を作る」で作る）
+/[Uu]nity/Assets/HomeCare/Resources/FirebaseSettings.asset
+/[Uu]nity/Assets/HomeCare/Resources/FirebaseSettings.asset.meta
+
+# Firebaseエミュレーターの記録
+firebase-debug.log
+firestore-debug.log

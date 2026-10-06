@@ -24,11 +24,15 @@ namespace HomeCare.Core.Data
         public HomeData Home { get; }
         public string Message { get; }
 
-        public ImportResult(ImportOutcome outcome, HomeData home, string message)
+        /// <summary>取り込んだ件数（足したものと、新しい方に置き換えたもの）。</summary>
+        public int ChangedCount { get; }
+
+        public ImportResult(ImportOutcome outcome, HomeData home, string message, int changedCount = 0)
         {
             Outcome = outcome;
             Home = home;
             Message = message;
+            ChangedCount = changedCount;
         }
     }
 
@@ -57,7 +61,8 @@ namespace HomeCare.Core.Data
 
             if (local == null || IsEmpty(local))
             {
-                return new ImportResult(ImportOutcome.Adopted, incoming, $"読み込みました（{Summary(incoming)}）。");
+                return new ImportResult(ImportOutcome.Adopted, incoming, $"読み込みました（{Summary(incoming)}）。",
+                    incoming.rooms.Count + incoming.points.Count + incoming.tasks.Count + incoming.completions.Count);
             }
             if (local.id != incoming.id)
             {
@@ -73,11 +78,11 @@ namespace HomeCare.Core.Data
             RecalculateLastDone(local);
 
             return new ImportResult(ImportOutcome.Merged, local,
-                changed == 0 ? "新しい内容はありませんでした。" : $"{changed}件を取り込みました（{Summary(local)}）。");
+                changed == 0 ? "新しい内容はありませんでした。" : $"{changed}件を取り込みました（{Summary(local)}）。", changed);
         }
 
         /// <summary>場所もやることも無い（起動しただけの）状態。</summary>
-        static bool IsEmpty(HomeData home) =>
+        public static bool IsEmpty(HomeData home) =>
             (home.points == null || home.points.Count == 0) && (home.tasks == null || home.tasks.Count == 0);
 
         static string Summary(HomeData home) =>

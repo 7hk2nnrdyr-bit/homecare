@@ -1,0 +1,57 @@
+rules_version = '2';
+
+// HomeCare のFirestoreセキュリティルール。
+// 「家のメンバー（memberUids に入っている利用者）だけが、その家のデータを読み書きできる」ようにする。
+// Firebaseコンソールの Firestore Database →「ルール」に、このファイルの中身を貼り付けて公開する。
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function homePath(homeId) {
+      return /databases/$(database)/documents/homes/$(homeId);
+    }
+
+    // 今の時点でメンバーか（読むとき）
+    function isMember(homeId) {
+      return signedIn() && request.auth.uid in get(homePath(homeId)).data.memberUids;
+    }
+
+    // 書き込みの後にメンバーか（家を作るのと同時に部屋などを書き込めるようにする）
+    function isMemberAfterWrite(homeId) {
+      return signedIn() && request.auth.uid in getAfter(homePath(homeId)).data.memberUids;
+    }
+
+    match /homes/{homeId} {
+      // まだ無い家を取得しようとしたときは「無い」と返す（家IDは推測できないUUID）
+      allow get: if signedIn() && (resource == null || request.auth.uid in resource.data.memberUids);
+      // 自分がメンバーの家だけを探せる
+      allow list: if signedIn() && request.auth.uid in resource.data.memberUids;
+
+      // 家を作れるのは、自分を持ち主かつ唯一のメンバーにするときだけ
+      allow create: if signedIn()
+        && request.resource.data.id == homeId
+        && request.resource.data.ownerUid == request.auth.uid
+        && request.resource.data.memberUids == [request.auth.uid];
+
+      // メンバーは家の名前などを変えられる。持ち主とメンバーの変更は、家族共有の機能を作るときに決める
+      allow update: if signedIn()
+        && request.auth.uid in resource.data.memberUids
+        && request.resource.data.ownerUid == resource.data.ownerUid
+        && request.resource.data.memberUids == resource.data.memberUids;
+
+      // 削除は deletedAt で行うので、ドキュメントは消させない
+      allow delete: if false;
+
+      match /{collection}/{docId} {
+        allow read: if isMember(homeId);
+        allow create, update: if collection in ['rooms', 'points', 'tasks', 'completions']
+          && isMemberAfterWrite(homeId)
+          && request.resource.data.id == docId;
+        allow delete: if false;
+      }
+    }
+  }
+}
