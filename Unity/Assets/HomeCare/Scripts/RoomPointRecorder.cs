@@ -39,10 +39,6 @@ namespace HomeCare.App
         [SerializeField]
         float m_MarkerSize = 0.05f;
 
-        static readonly Color k_OkColor = new Color(0.2f, 0.75f, 0.3f);
-        static readonly Color k_DueSoonColor = new Color(0.95f, 0.8f, 0.1f);
-        static readonly Color k_OverdueColor = new Color(0.9f, 0.2f, 0.2f);
-
         JsonFileHomeRepository m_Repository;
         PointForm m_Form;
         PointDetailView m_Detail;
@@ -137,15 +133,25 @@ namespace HomeCare.App
 
         void OnGUI()
         {
-            // 位置合わせができるまでは、マーカーを映すよう案内する
-            if (m_Localizer == null || m_Localizer.TryGetRoomFrame(m_Room.id, out _))
+            if (IsAnyViewOpen())
             {
                 return;
             }
             var scale = Screen.dpi > 0 ? Mathf.Max(1f, Screen.dpi / 160f) : 1f;
             GUI.matrix = Matrix4x4.Scale(new Vector3(scale, scale, 1f));
             var width = Screen.width / scale;
-            GUI.Box(new Rect(10f, 40f, width - 20f, 30f), $"部屋のマーカー（{m_OriginMarker}）をカメラに映してください");
+
+            if (GUI.Button(new Rect(10f, 40f, 80f, 36f), "一覧へ"))
+            {
+                AppScenes.OpenList();
+                return;
+            }
+
+            // 位置合わせができるまでは、マーカーを映すよう案内する
+            if (m_Localizer != null && !m_Localizer.TryGetRoomFrame(m_Room.id, out _))
+            {
+                GUI.Box(new Rect(100f, 40f, width - 110f, 36f), $"部屋のマーカー（{m_OriginMarker}）をカメラに映してください");
+            }
         }
 
         static Vector3 WorldPositionOf(PointData point, RoomFrame frame) =>
@@ -185,7 +191,7 @@ namespace HomeCare.App
             }
             if (m_Markers.TryGetValue(pointId, out var renderer))
             {
-                renderer.material.color = ColorOf(m_Editor.StatusOfPoint(pointId, DateTime.Today));
+                renderer.material.color = StatusStyle.ColorOf(m_Editor.StatusOfPoint(pointId, DateTime.Today));
             }
         }
 
@@ -268,24 +274,8 @@ namespace HomeCare.App
             marker.GetComponent<SphereCollider>().radius = 1.5f;
             marker.AddComponent<PointMarker>().PointId = point.id;
             var renderer = marker.GetComponent<Renderer>();
-            renderer.material.color = ColorOf(m_Editor.StatusOfPoint(point.id, DateTime.Today));
+            renderer.material.color = StatusStyle.ColorOf(m_Editor.StatusOfPoint(point.id, DateTime.Today));
             m_Markers[point.id] = renderer;
-        }
-
-        /// <summary>タスクが無いポイントは白にする。</summary>
-        static Color ColorOf(DueStatus? status)
-        {
-            switch (status)
-            {
-                case DueStatus.Overdue:
-                    return k_OverdueColor;
-                case DueStatus.DueSoon:
-                    return k_DueSoonColor;
-                case DueStatus.Ok:
-                    return k_OkColor;
-                default:
-                    return Color.white;
-            }
         }
 
         /// <summary>Inspectorの右上のメニューから実行できる。保存したポイントをすべて消す（動作確認用）。</summary>

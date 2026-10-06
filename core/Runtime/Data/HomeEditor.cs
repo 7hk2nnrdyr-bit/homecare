@@ -181,6 +181,24 @@ namespace HomeCare.Core.Data
             DueDateCalculator.StatusOn(today, NextDueDate(task), DataFormat.ToRecurrence(task.recurrence));
 
         /// <summary>
+        /// リスト画面に出す、すべてのタスクの一覧。期限の近い順（期限切れが先頭）に並べる。
+        /// 期限が同じなら、状態の悪い順、名前の順にする。
+        /// </summary>
+        public IReadOnlyList<DueItem> DueList(DateTime today) =>
+            Home.tasks
+                .Where(t => string.IsNullOrEmpty(t.deletedAt))
+                .Select(t => new DueItem(
+                    t,
+                    string.IsNullOrEmpty(t.pointId) ? null : FindPoint(t.pointId),
+                    Home.rooms.FirstOrDefault(r => r.id == t.roomId),
+                    NextDueDate(t),
+                    StatusOf(t, today)))
+                .OrderBy(item => item.NextDue)
+                .ThenByDescending(item => item.Status)
+                .ThenBy(item => item.Task.title, StringComparer.Ordinal)
+                .ToList();
+
+        /// <summary>
         /// ポイントの色。そのポイントのタスクのうち、一番悪い状態にする（赤が1つでもあれば赤）。
         /// タスクが無ければ null。
         /// </summary>
