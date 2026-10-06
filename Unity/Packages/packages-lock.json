@@ -1,5 +1,11 @@
 {
   "dependencies": {
+    "com.homecare.core": {
+      "version": "file:../../core",
+      "depth": 0,
+      "source": "local",
+      "dependencies": {}
+    },
     "com.unity.burst": {
       "version": "1.8.30",
       "depth": 2,
