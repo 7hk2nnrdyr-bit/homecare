@@ -44,6 +44,12 @@ namespace HomeCare.Core.Data
 
         public static Vec3 ToVec3(float[] values) => new Vec3(values[0], values[1], values[2]);
 
+        public static float[] ToArray(Quat q) => new[] { q.X, q.Y, q.Z, q.W };
+
+        /// <summary>向きが無い・壊れているときは、回転なしとして扱う。</summary>
+        public static Quat ToQuat(float[] values) =>
+            values != null && values.Length == 4 ? new Quat(values[0], values[1], values[2], values[3]) : Quat.Identity;
+
         /// <summary>基準点が部屋の座標のどこに、どの向きで置かれているか。</summary>
         public static Pose ToPose(LocalizerData localizer) =>
             new Pose(ToVec3(localizer.positionInRoom), Quat.AngleAxis(localizer.yawDeg, Vec3.Up));

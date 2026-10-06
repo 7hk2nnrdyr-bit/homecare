@@ -23,7 +23,7 @@ namespace HomeCare.App
             {
                 return null;
             }
-            var home = JsonUtility.FromJson<HomeData>(File.ReadAllText(FilePath));
+            var home = HomeJson.Parse(File.ReadAllText(FilePath));
             if (home.schemaVersion > HomeData.CurrentSchemaVersion)
             {
                 Debug.LogWarning($"[HomeCare] 新しい版のデータです（版{home.schemaVersion}）。アプリを更新してください。");
@@ -35,7 +35,7 @@ namespace HomeCare.App
         {
             // 書き込み中に電源が切れても元のファイルが壊れないよう、別名で書いてから置き換える
             var temp = FilePath + ".tmp";
-            File.WriteAllText(temp, JsonUtility.ToJson(home, true));
+            File.WriteAllText(temp, HomeJson.Write(home));
             if (File.Exists(FilePath))
             {
                 File.Replace(temp, FilePath, null);

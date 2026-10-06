@@ -15,6 +15,8 @@ namespace HomeCare.App
 
         public static Quat ToCore(this Quaternion q) => new Quat(q.x, q.y, q.z, q.w);
 
+        public static Quaternion ToUnity(this Quat q) => new Quaternion(q.X, q.Y, q.Z, q.W);
+
         public static HomeCare.Core.Spatial.Pose ToCorePose(this Transform t) =>
             new HomeCare.Core.Spatial.Pose(t.position.ToCore(), t.rotation.ToCore());
     }
