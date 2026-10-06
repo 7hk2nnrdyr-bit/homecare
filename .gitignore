@@ -4,3 +4,26 @@ obj/
 
 # macOS
 .DS_Store
+
+# Unity（unity/ フォルダ）：Unityが自動で作り直すファイルはGitに入れない
+/unity/[Ll]ibrary/
+/unity/[Tt]emp/
+/unity/[Oo]bj/
+/unity/[Bb]uild/
+/unity/[Bb]uilds/
+/unity/[Ll]ogs/
+/unity/[Uu]ser[Ss]ettings/
+/unity/[Mm]emoryCaptures/
+/unity/[Rr]ecordings/
+/unity/.utmp/
+/unity/*.csproj
+/unity/*.sln
+/unity/*.slnx
+/unity/.vs/
+/unity/.vscode/
+/unity/*.apk
+/unity/*.aab
+/unity/*.pidb
+/unity/*.unityproj
+/unity/sysinfo.txt
+/unity/crashlytics-buildid.txt
