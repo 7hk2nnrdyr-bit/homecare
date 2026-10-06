@@ -23,6 +23,9 @@ namespace HomeCare.App
         // 部屋ID → 最後にマーカーから作った部屋の座標系
         readonly Dictionary<string, RoomFrame> m_Frames = new Dictionary<string, RoomFrame>();
 
+        // 登録に無い画像を見つけたことを、画像ごとに一度だけ知らせるための記録
+        readonly HashSet<TrackableId> m_ReportedUnknown = new HashSet<TrackableId>();
+
         ARTrackedImageManager m_Manager;
 
         void Start()
@@ -65,6 +68,10 @@ namespace HomeCare.App
                 var markerId = image.referenceImage.name;
                 if (string.IsNullOrEmpty(markerId) || !m_Markers.TryGetValue(markerId, out var marker))
                 {
+                    if (m_ReportedUnknown.Add(image.trackableId))
+                    {
+                        Debug.LogWarning($"[HomeCare] 画像を見つけましたが、部屋に登録したマーカーではありません（名前：{(string.IsNullOrEmpty(markerId) ? "なし" : markerId)}）。");
+                    }
                     continue;
                 }
 
