@@ -66,7 +66,7 @@ namespace HomeCare.App
                 var recurrence = DataFormat.ToRecurrence(task.recurrence);
 
                 GUILayout.BeginVertical(GUI.skin.box);
-                GUILayout.Label($"{StatusMark(status)} {task.title}（{DueLabel.For(today, next)}）");
+                GUILayout.Label($"{StatusStyle.MarkOf(status)} {task.title}（{DueLabel.For(today, next)}）");
                 GUILayout.Label($"周期：{DueLabel.For(recurrence)}");
                 GUILayout.Label($"次回期限：{DataFormat.FormatDate(next)}");
                 GUILayout.Label($"前回実施：{(string.IsNullOrEmpty(task.lastDoneDate) ? "まだ" : task.lastDoneDate)}");
@@ -89,20 +89,6 @@ namespace HomeCare.App
         {
             IsOpen = false;
             m_OnClose?.Invoke();
-        }
-
-        /// <summary>色だけに頼らないよう、文字の印も付ける。</summary>
-        static string StatusMark(DueStatus status)
-        {
-            switch (status)
-            {
-                case DueStatus.Overdue:
-                    return "【期限切れ】";
-                case DueStatus.DueSoon:
-                    return "【もうすぐ】";
-                default:
-                    return "【OK】";
-            }
         }
     }
 }
