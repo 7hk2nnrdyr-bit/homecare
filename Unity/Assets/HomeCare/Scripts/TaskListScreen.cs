@@ -2,7 +2,6 @@ using System;
 using HomeCare.Core.Data;
 using HomeCare.Core.Scheduling;
 using UnityEngine;
-using UnityEngine.SceneManagement;
 
 namespace HomeCare.App
 {
@@ -22,6 +21,12 @@ namespace HomeCare.App
         {
             m_Repository = new JsonFileHomeRepository();
             m_Editor = HomeEditor.LoadOrCreate(m_Repository, "わが家");
+        }
+
+        void Start()
+        {
+            // アプリの起動時はARが自動で動き出すので、リスト画面では止めておく
+            AppScenes.StopAR();
         }
 
         void Update()
@@ -61,7 +66,7 @@ namespace HomeCare.App
             GUILayout.Label("やること一覧（期限の近い順）");
             if (GUILayout.Button("カメラで見る（場所の登録・確認）", GUILayout.Height(44f)))
             {
-                SceneManager.LoadScene(AppScenes.Camera);
+                AppScenes.OpenCamera();
             }
 
             if (items.Count == 0)

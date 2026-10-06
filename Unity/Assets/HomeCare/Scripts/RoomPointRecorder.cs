@@ -6,7 +6,6 @@ using HomeCare.Core.Scheduling;
 using HomeCare.Core.Spatial;
 using UnityEngine;
 using UnityEngine.InputSystem;
-using UnityEngine.SceneManagement;
 using UnityEngine.XR.Interaction.Toolkit.Samples.ARStarterAssets;
 using UnityEngine.XR.Interaction.Toolkit.Samples.StarterAssets;
 
@@ -144,7 +143,7 @@ namespace HomeCare.App
 
             if (GUI.Button(new Rect(10f, 40f, 80f, 36f), "一覧へ"))
             {
-                SceneManager.LoadScene(AppScenes.List);
+                AppScenes.OpenList();
                 return;
             }
 
