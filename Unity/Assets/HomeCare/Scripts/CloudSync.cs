@@ -34,20 +34,40 @@ namespace HomeCare.App
 
         public static async Task<SyncResult> SyncAsync(HomeData home)
         {
-            if (!IsConfigured(out var whatToDo))
+            var sync = GetSync(out var whatToDo);
+            return sync == null ? new SyncResult(SyncOutcome.Failed, home, whatToDo) : await sync.SyncAsync(home);
+        }
+
+        public static async Task<InviteResult> CreateInviteAsync(HomeData home)
+        {
+            var sync = GetSync(out var whatToDo);
+            return sync == null ? InviteResult.Failed(whatToDo) : await sync.CreateInviteAsync(home);
+        }
+
+        public static async Task<SyncResult> JoinAsync(HomeData home, string code)
+        {
+            var sync = GetSync(out var whatToDo);
+            return sync == null ? new SyncResult(SyncOutcome.Failed, home, whatToDo) : await sync.JoinAsync(home, code);
+        }
+
+        /// <summary>
+        /// 同期の部品を返す。ログイン状態を使い回すため、設定と端末（エディターでの切り替え）が変わらない限り同じものを使う。
+        /// </summary>
+        static HomeSync GetSync(out string whatToDo)
+        {
+            if (!IsConfigured(out whatToDo))
             {
-                return new SyncResult(SyncOutcome.Failed, home, whatToDo);
+                return null;
             }
-            // ログイン状態を使い回すため、設定が変わらない限り同じものを使う
             var settings = FirebaseSettings.Load();
             var config = new FirebaseConfig { ProjectId = settings.projectId.Trim(), ApiKey = settings.webApiKey.Trim() };
-            var key = config.ProjectId + "/" + config.ApiKey;
+            var key = config.ProjectId + "/" + config.ApiKey + "/" + DeviceSlot.Suffix;
             if (s_Sync == null || s_SyncFor != key)
             {
                 s_Sync = new HomeSync(new FirestoreHomeStore(config, new UnityWebRequestTransport(), new PlayerPrefsTokenStore()));
                 s_SyncFor = key;
             }
-            return await s_Sync.SyncAsync(home);
+            return s_Sync;
         }
     }
 }

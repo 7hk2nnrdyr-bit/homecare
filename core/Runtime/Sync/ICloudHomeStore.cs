@@ -20,5 +20,14 @@ namespace HomeCare.Core.Sync
 
         /// <summary>変わった分だけを保存する。</summary>
         Task SaveAsync(HomeChanges changes);
+
+        /// <summary>招待を保存する。招待する人は、その家のメンバーでなければならない。</summary>
+        Task CreateInviteAsync(HomeInvite invite);
+
+        /// <summary>招待コードから招待を探す。無ければ null。</summary>
+        Task<HomeInvite> FindInviteAsync(string code);
+
+        /// <summary>招待を使って、ログイン中の利用者を家のメンバーに加える。</summary>
+        Task JoinHomeAsync(HomeInvite invite);
     }
 }

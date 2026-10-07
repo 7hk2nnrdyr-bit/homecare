@@ -12,9 +12,10 @@ namespace HomeCare.App
     {
         public string FilePath { get; }
 
-        public JsonFileHomeRepository(string fileName = "home.json")
+        /// <param name="fileName">省略すると home.json（エディターで端末Bに切り替えているときは home-B.json）。</param>
+        public JsonFileHomeRepository(string fileName = null)
         {
-            FilePath = Path.Combine(Application.persistentDataPath, fileName);
+            FilePath = Path.Combine(Application.persistentDataPath, fileName ?? $"home{DeviceSlot.Suffix}.json");
         }
 
         public HomeData Load()

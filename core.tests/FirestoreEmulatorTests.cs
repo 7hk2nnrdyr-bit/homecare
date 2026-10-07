@@ -51,9 +51,29 @@ namespace HomeCare.Core.Tests
         private static readonly string AuthHost = Environment.GetEnvironmentVariable("FIREBASE_AUTH_EMULATOR_HOST");
         private static bool EmulatorRunning => !string.IsNullOrEmpty(FirestoreHost) && !string.IsNullOrEmpty(AuthHost);
 
+        private static FirebaseConfig Config => FirebaseConfig.ForEmulator("demo-homecare", AuthHost, FirestoreHost);
+
         private static FirestoreHomeStore NewDevice(ITokenStore tokens = null) =>
-            new FirestoreHomeStore(FirebaseConfig.ForEmulator("demo-homecare", AuthHost, FirestoreHost),
-                new HttpClientTransport(), tokens ?? new InMemoryTokenStore());
+            new FirestoreHomeStore(Config, new HttpClientTransport(), tokens ?? new InMemoryTokenStore());
+
+        /// <summary>アプリを通さず、Firestoreに直接書き込む（ルールが不正な書き込みを断るか確かめる）。</summary>
+        private static async Task<(FirestoreClient Db, string Uid)> RawClientAsync(ITokenStore tokens = null)
+        {
+            var auth = new FirebaseAuthClient(Config, new HttpClientTransport(), tokens ?? new InMemoryTokenStore());
+            var uid = await auth.SignInAsync();
+            return (new FirestoreClient(Config, new HttpClientTransport(), auth.GetIdTokenAsync), uid);
+        }
+
+        private static async Task<(HomeData Home, InviteResult Invite, ITokenStore OwnerTokens)> SharedHomeAsync()
+        {
+            var ownerTokens = new InMemoryTokenStore();
+            var home = RecordFieldsTests.FullHome();
+            var owner = new HomeSync(NewDevice(ownerTokens));
+            await owner.SyncAsync(home);
+            return (home, await owner.CreateInviteAsync(home), ownerTokens);
+        }
+
+        private static HomeData EmptyHome() => HomeEditor.LoadOrCreate(new InMemoryHomeRepository(), "わが家").Home;
 
         [Fact]
         public async Task 保存した家をそのまま取得できる()
@@ -160,5 +180,100 @@ namespace HomeCare.Core.Tests
             Assert.Equal(first, second);
             Assert.NotEqual(first, await NewDevice().SignInAsync());
         }
-    }
+    
+        [Fact]
+        public async Task 招待コードで参加した家族と変更を共有できる()
+        {
+            if (!EmulatorRunning) return;
+            var (home, invite, ownerTokens) = await SharedHomeAsync();
+
+            // 家族の端末（別の利用者）がコードで参加し、タスクを完了して同期する
+            var family = new HomeSync(NewDevice());
+            var joined = await family.JoinAsync(EmptyHome(), invite.Invite.code);
+            var familyHome = joined.Home;
+            new HomeEditor(familyHome).CompleteTask(familyHome.tasks.Single().id, new DateTime(2026, 10, 20));
+            var familySync = await family.SyncAsync(familyHome);
+
+            // 持ち主の端末で同期すると、家族の完了が届く
+            var ownerSync = await new HomeSync(NewDevice(ownerTokens)).SyncAsync(home);
+
+            Assert.True(invite.Ok, invite.Message);
+            Assert.Equal(SyncOutcome.Downloaded, joined.Outcome);
+            Assert.Equal(home.points.Single().rotationInRoom, familyHome.points.Single().rotationInRoom);
+            Assert.Contains("送信2件", familySync.Message);
+            Assert.Equal("2026-10-20", ownerSync.Home.tasks.Single().lastDoneDate);
+        }
+
+        [Fact]
+        public async Task 招待コードなしでは家に参加できない()
+        {
+            if (!EmulatorRunning) return;
+            var (home, _, _) = await SharedHomeAsync();
+
+            // 存在しない招待をでっちあげて参加しようとする
+            var fake = new HomeInvite { code = "ZZZZZZZZ", homeId = home.id, expiresAtMillis = long.MaxValue };
+            var error = await Assert.ThrowsAsync<FirebaseException>(() => NewDevice().JoinHomeAsync(fake));
+
+            Assert.Equal(403, error.Status);
+        }
+
+        [Fact]
+        public async Task 別の家の招待コードでは参加できない()
+        {
+            if (!EmulatorRunning) return;
+            var (homeA, _, _) = await SharedHomeAsync();
+            var (_, inviteB, _) = await SharedHomeAsync();
+
+            var misuse = new HomeInvite { code = inviteB.Invite.code, homeId = homeA.id };
+            var error = await Assert.ThrowsAsync<FirebaseException>(() => NewDevice().JoinHomeAsync(misuse));
+
+            Assert.Equal(403, error.Status);
+        }
+
+        [Fact]
+        public async Task 参加した人もほかの人をメンバーに足せない()
+        {
+            if (!EmulatorRunning) return;
+            var (home, invite, _) = await SharedHomeAsync();
+            var familyTokens = new InMemoryTokenStore();
+            await new HomeSync(NewDevice(familyTokens)).JoinAsync(EmptyHome(), invite.Invite.code);
+
+            var (db, _) = await RawClientAsync(familyTokens);
+            var error = await Assert.ThrowsAsync<FirebaseException>(() => db.CommitAsync(new[]
+            {
+                new FirestoreWrite
+                {
+                    Document = new FirestoreDocument { Path = $"homes/{home.id}", Fields = new System.Collections.Generic.Dictionary<string, object>() },
+                    OnlyFields = new System.Collections.Generic.List<string>(),
+                    MustExist = true,
+                    AppendToArrayField = "memberUids",
+                    AppendToArrayValues = new System.Collections.Generic.List<object> { "someone-else" },
+                },
+            }));
+
+            Assert.Equal(403, error.Status);
+        }
+
+        [Fact]
+        public async Task メンバーでない人は招待コードを作れず期限の長すぎる招待も作れない()
+        {
+            if (!EmulatorRunning) return;
+            var (home, _, ownerTokens) = await SharedHomeAsync();
+
+            var strangerInvite = await new HomeSync(NewDevice()).CreateInviteAsync(home);
+            var (db, uid) = await RawClientAsync(ownerTokens);
+            var tooLong = new HomeInvite
+            {
+                code = InviteCode.Generate(), homeId = home.id, createdByUid = uid, createdAt = "",
+                expiresAtMillis = DateTimeOffset.UtcNow.AddDays(30).ToUnixTimeMilliseconds(),
+            };
+            var error = await Assert.ThrowsAsync<FirebaseException>(() => db.CommitAsync(new[]
+            {
+                new FirestoreWrite { Document = new FirestoreDocument { Path = $"invites/{tooLong.code}", Fields = RecordFields.ToFields(tooLong) } },
+            }));
+
+            Assert.False(strangerInvite.Ok);
+            Assert.Equal(403, error.Status);
+        }
+}
 }

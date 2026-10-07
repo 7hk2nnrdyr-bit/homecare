@@ -24,6 +24,20 @@ service cloud.firestore {
       return signedIn() && request.auth.uid in getAfter(homePath(homeId)).data.memberUids;
     }
 
+    // 招待コードで参加するときの決まり：
+    // ・メンバー一覧の最後に自分を1人足すだけ（ほかの人は足せない・消せない）
+    // ・変えてよいのはメンバー一覧と、使った招待コード（joinCode）だけ
+    // ・その招待コードが本当にこの家のもので、期限内であること
+    function isJoiningWithInvite(homeId) {
+      let invite = get(/databases/$(database)/documents/invites/$(request.resource.data.joinCode));
+      return signedIn()
+        && !(request.auth.uid in resource.data.memberUids)
+        && request.resource.data.memberUids == resource.data.memberUids.concat([request.auth.uid])
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['memberUids', 'joinCode'])
+        && invite.data.homeId == homeId
+        && request.time.toMillis() < invite.data.expiresAtMillis;
+    }
+
     match /homes/{homeId} {
       // まだ無い家を取得しようとしたときは「無い」と返す（家IDは推測できないUUID）
       allow get: if signedIn() && (resource == null || request.auth.uid in resource.data.memberUids);
@@ -36,11 +50,13 @@ service cloud.firestore {
         && request.resource.data.ownerUid == request.auth.uid
         && request.resource.data.memberUids == [request.auth.uid];
 
-      // メンバーは家の名前などを変えられる。持ち主とメンバーの変更は、家族共有の機能を作るときに決める
-      allow update: if signedIn()
-        && request.auth.uid in resource.data.memberUids
-        && request.resource.data.ownerUid == resource.data.ownerUid
-        && request.resource.data.memberUids == resource.data.memberUids;
+      // メンバーは家の名前などを変えられるが、持ち主とメンバー一覧は変えられない。
+      // メンバー以外は、招待コードを使って自分をメンバーに足すことだけができる
+      allow update: if (signedIn()
+          && request.auth.uid in resource.data.memberUids
+          && request.resource.data.ownerUid == resource.data.ownerUid
+          && request.resource.data.memberUids == resource.data.memberUids)
+        || isJoiningWithInvite(homeId);
 
       // 削除は deletedAt で行うので、ドキュメントは消させない
       allow delete: if false;
@@ -52,6 +68,20 @@ service cloud.firestore {
           && request.resource.data.id == docId;
         allow delete: if false;
       }
+    }
+
+    // 招待。コードを知っている人だけが取得できる（一覧で探すことはできない）
+    match /invites/{code} {
+      allow get: if signedIn();
+      allow list: if false;
+      // 招待を作れるのは、その家のメンバーだけ。期限は最長1日（端末の時計のずれを見て少し余裕を持たせる）
+      allow create: if signedIn()
+        && request.resource.data.code == code
+        && request.resource.data.createdByUid == request.auth.uid
+        && request.auth.uid in get(homePath(request.resource.data.homeId)).data.memberUids
+        && request.resource.data.expiresAtMillis > request.time.toMillis()
+        && request.resource.data.expiresAtMillis < request.time.toMillis() + 25 * 60 * 60 * 1000;
+      allow update, delete: if false;
     }
   }
 }

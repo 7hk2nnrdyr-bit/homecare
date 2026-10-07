@@ -26,6 +26,13 @@ namespace HomeCare.Core.Firebase
 
         /// <summary>true なら、まだ無いときだけ作る（すでにあれば失敗させる）。</summary>
         public bool MustNotExist;
+
+        /// <summary>true なら、すでにあるときだけ書き換える（無ければ失敗させる）。</summary>
+        public bool MustExist;
+
+        /// <summary>配列の項目に、まだ入っていない値を足す（例：memberUids に自分を足す）。</summary>
+        public string AppendToArrayField;
+        public List<object> AppendToArrayValues;
     }
 
     /// <summary>
@@ -146,9 +153,23 @@ namespace HomeCare.Core.Firebase
             {
                 json["updateMask"] = new Dictionary<string, object> { ["fieldPaths"] = write.OnlyFields.Cast<object>().ToList() };
             }
-            if (write.MustNotExist)
+            if (write.MustNotExist || write.MustExist)
             {
-                json["currentDocument"] = new Dictionary<string, object> { ["exists"] = false };
+                json["currentDocument"] = new Dictionary<string, object> { ["exists"] = write.MustExist };
+            }
+            if (write.AppendToArrayField != null)
+            {
+                json["updateTransforms"] = new List<object>
+                {
+                    new Dictionary<string, object>
+                    {
+                        ["fieldPath"] = write.AppendToArrayField,
+                        ["appendMissingElements"] = new Dictionary<string, object>
+                        {
+                            ["values"] = write.AppendToArrayValues.Select(v => (object)EncodeValue(v)).ToList(),
+                        },
+                    },
+                };
             }
             return json;
         }

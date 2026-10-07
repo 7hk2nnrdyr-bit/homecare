@@ -6,7 +6,8 @@ namespace HomeCare.App
     /// <summary>ログイン状態（更新用トークン）を端末に残す。アプリを消すまで、同じ利用者でログインし続ける。</summary>
     public class PlayerPrefsTokenStore : ITokenStore
     {
-        const string Key = "HomeCare.FirebaseRefreshToken";
+        // エディターで端末を切り替えたときは、端末ごとに別の利用者としてログインする
+        static string Key => "HomeCare.FirebaseRefreshToken" + DeviceSlot.Suffix;
 
         public string LoadRefreshToken() => PlayerPrefs.GetString(Key, "");
 

@@ -19,6 +19,24 @@ namespace HomeCare.Core.Sync
         Failed,
     }
 
+    public class InviteResult
+    {
+        public bool Ok { get; }
+
+        /// <summary>作った招待。失敗したときは null。</summary>
+        public HomeInvite Invite { get; }
+        public string Message { get; }
+
+        public InviteResult(bool ok, HomeInvite invite, string message)
+        {
+            Ok = ok;
+            Invite = invite;
+            Message = message;
+        }
+
+        public static InviteResult Failed(string message) => new InviteResult(false, null, message);
+    }
+
     public class SyncResult
     {
         public SyncOutcome Outcome { get; }
@@ -44,11 +62,16 @@ namespace HomeCare.Core.Sync
     /// </summary>
     public class HomeSync
     {
-        private readonly ICloudHomeStore _store;
+        /// <summary>招待コードの有効期間。</summary>
+        public static readonly TimeSpan InviteLifetime = TimeSpan.FromHours(24);
 
-        public HomeSync(ICloudHomeStore store)
+        private readonly ICloudHomeStore _store;
+        private readonly Func<DateTime> _utcNow;
+
+        public HomeSync(ICloudHomeStore store, Func<DateTime> utcNow = null)
         {
             _store = store ?? throw new ArgumentNullException(nameof(store));
+            _utcNow = utcNow ?? (() => DateTime.UtcNow);
         }
 
         public async Task<SyncResult> SyncAsync(HomeData original)
@@ -101,6 +124,80 @@ namespace HomeCare.Core.Sync
             catch (Exception e)
             {
                 return new SyncResult(SyncOutcome.Failed, original, $"同期できませんでした。{e.Message}");
+            }
+        }
+
+        /// <summary>
+        /// 家族を招待するコードを作る。先に同期して、家がクラウドにある状態にしておく必要がある。
+        /// </summary>
+        public async Task<InviteResult> CreateInviteAsync(HomeData home)
+        {
+            try
+            {
+                var uid = await _store.SignInAsync();
+                if (await _store.LoadAsync(home.id) == null)
+                {
+                    return InviteResult.Failed("先に「クラウドと同期」で、家をクラウドに保存してください。");
+                }
+                var now = _utcNow();
+                var invite = new HomeInvite
+                {
+                    code = InviteCode.Generate(),
+                    homeId = home.id,
+                    createdByUid = uid,
+                    createdAt = DataFormat.FormatTimestamp(now),
+                    expiresAtMillis = new DateTimeOffset(DateTime.SpecifyKind(now + InviteLifetime, DateTimeKind.Utc)).ToUnixTimeMilliseconds(),
+                };
+                await _store.CreateInviteAsync(invite);
+                return new InviteResult(true, invite, $"招待コード：{InviteCode.Format(invite.code)}");
+            }
+            catch (Exception e)
+            {
+                return InviteResult.Failed($"招待コードを作れませんでした。{e.Message}");
+            }
+        }
+
+        /// <summary>
+        /// 招待コードで家に参加し、その家のデータを取得する。
+        /// この端末の家のデータは、参加した家のデータに置き換わる（呼ぶ前に利用者に確かめる）。
+        /// </summary>
+        public async Task<SyncResult> JoinAsync(HomeData original, string codeInput)
+        {
+            var code = InviteCode.Normalize(codeInput);
+            if (code == null)
+            {
+                return new SyncResult(SyncOutcome.Failed, original, $"招待コードは{InviteCode.Length}文字の英数字です。");
+            }
+            try
+            {
+                await _store.SignInAsync();
+                var invite = await _store.FindInviteAsync(code);
+                if (invite == null)
+                {
+                    return new SyncResult(SyncOutcome.Failed, original, "招待コードが見つかりません。入力を確かめてください。");
+                }
+                if (_utcNow() >= invite.ExpiresAtUtc)
+                {
+                    return new SyncResult(SyncOutcome.Failed, original, "招待コードの期限が切れています。新しいコードを作ってもらってください。");
+                }
+                await _store.JoinHomeAsync(invite);
+                var joined = await _store.LoadAsync(invite.homeId);
+                if (joined == null)
+                {
+                    return new SyncResult(SyncOutcome.Failed, original, "招待された家が見つかりません。");
+                }
+                if (joined.schemaVersion > HomeData.CurrentSchemaVersion)
+                {
+                    return new SyncResult(SyncOutcome.Failed, original,
+                        $"新しい版のアプリで作られた家です（版{joined.schemaVersion}）。アプリを更新してください。");
+                }
+                var home = new HomeEditor(joined).Home;
+                var count = home.rooms.Count + home.points.Count + home.tasks.Count + home.completions.Count;
+                return new SyncResult(SyncOutcome.Downloaded, home, $"家「{home.name}」に参加しました（{count}件）。");
+            }
+            catch (Exception e)
+            {
+                return new SyncResult(SyncOutcome.Failed, original, $"参加できませんでした。{e.Message}");
             }
         }
     }

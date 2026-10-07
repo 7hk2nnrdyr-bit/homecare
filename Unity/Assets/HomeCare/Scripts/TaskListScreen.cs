@@ -26,6 +26,9 @@ namespace HomeCare.App
         bool m_ConfirmDelete;
 #endif
         string m_CloudMessage;
+        string m_InviteText;
+        string m_JoinCode = "";
+        bool m_ConfirmJoin;
 
         void Awake()
         {
@@ -179,13 +182,68 @@ namespace HomeCare.App
             GUILayout.Label("この端末の家のデータを、クラウド（Firebase）と同期します。");
             var previousEnabled = GUI.enabled;
             GUI.enabled = !m_Syncing;
-            if (GUILayout.Button(m_Syncing ? "同期しています…" : "クラウドと同期", GUILayout.Height(36f)))
+            if (GUILayout.Button(m_Syncing ? "通信しています…" : "クラウドと同期", GUILayout.Height(36f)))
             {
                 m_PendingTransfer = SyncWithCloud;
             }
+            if (!string.IsNullOrEmpty(m_CloudMessage))
+            {
+                GUILayout.Label(m_CloudMessage);
+            }
+
+            // ---- 家族と共有する ----
+            GUILayout.Space(8f);
+            GUILayout.Label("■ 家族を招待する");
+            if (GUILayout.Button("招待コードを作る", GUILayout.Height(36f)))
+            {
+                m_PendingTransfer = CreateInvite;
+            }
+            if (!string.IsNullOrEmpty(m_InviteText))
+            {
+                GUILayout.Label(m_InviteText);
+            }
+
+            GUILayout.Space(8f);
+            GUILayout.Label("■ 招待コードで家に参加する");
+            m_JoinCode = GUILayout.TextField(m_JoinCode ?? "", 12, GUILayout.Height(32f));
+            if (!m_ConfirmJoin && GUILayout.Button("参加する", GUILayout.Height(36f)))
+            {
+                // この端末にすでに家のデータがあれば、置き換わることを先に確かめる
+                if (HomeImporter.IsEmpty(m_Editor.Home))
+                {
+                    m_PendingTransfer = JoinHome;
+                }
+                else
+                {
+                    m_ConfirmJoin = true;
+                }
+            }
+            if (m_ConfirmJoin)
+            {
+                GUILayout.Label("この端末の家のデータは、参加する家のデータに置き換わります。この端末だけにある内容は消えます。");
+                GUILayout.BeginHorizontal();
+                if (GUILayout.Button("置き換えて参加する", GUILayout.Height(32f)))
+                {
+                    m_ConfirmJoin = false;
+                    m_PendingTransfer = JoinHome;
+                }
+                if (GUILayout.Button("やめる", GUILayout.Height(32f)))
+                {
+                    m_ConfirmJoin = false;
+                }
+                GUILayout.EndHorizontal();
+            }
+
 #if UNITY_EDITOR
+            // ---- Unityでの動作確認用 ----
+            GUILayout.Space(8f);
+            GUILayout.Label($"■（Unity）動作確認用　今は「端末{DeviceSlot.Current}」");
+            if (GUILayout.Button(DeviceSlot.Current == "A" ? "端末Bに切り替える（別の家族の端末のつもり）" : "端末Aに切り替える", GUILayout.Height(28f)))
+            {
+                m_PendingTransfer = SwitchDevice;
+            }
             // クラウドからの取得を試すために、端末のデータだけを消す（ログインは残す）
-            if (!m_ConfirmDelete && GUILayout.Button("（Unity）この端末の家のデータを消す", GUILayout.Height(28f)))
+            if (!m_ConfirmDelete && GUILayout.Button("この端末の家のデータを消す", GUILayout.Height(28f)))
             {
                 m_ConfirmDelete = true;
             }
@@ -206,12 +264,92 @@ namespace HomeCare.App
             }
 #endif
             GUI.enabled = previousEnabled;
-            if (!string.IsNullOrEmpty(m_CloudMessage))
-            {
-                GUILayout.Label(m_CloudMessage);
-            }
             GUILayout.EndVertical();
         }
+
+        /// <summary>同期や参加で受け取った家のデータを、この端末に保存して画面に出す。</summary>
+        void UseHome(HomeData home)
+        {
+            m_Repository.Save(home);
+            m_Editor = new HomeEditor(home);
+        }
+
+        async void CreateInvite()
+        {
+            m_Syncing = true;
+            m_InviteText = null;
+            m_CloudMessage = "招待コードを作っています…";
+            try
+            {
+                // 招待する家がクラウドに最新の状態であるよう、先に同期する
+                var synced = await CloudSync.SyncAsync(m_Editor.Home);
+                if (synced.Outcome == SyncOutcome.Failed)
+                {
+                    m_CloudMessage = synced.Message;
+                    return;
+                }
+                UseHome(synced.Home);
+
+                var result = await CloudSync.CreateInviteAsync(m_Editor.Home);
+                m_CloudMessage = result.Message;
+                if (result.Ok)
+                {
+                    var code = InviteCode.Format(result.Invite.code);
+                    GUIUtility.systemCopyBuffer = code;
+                    var expires = result.Invite.ExpiresAtUtc.ToLocalTime();
+                    m_InviteText = $"招待コード：{code}\n{expires:M月d日 H:mm}まで使えます。クリップボードにも入れました。\n" +
+                        "家族の端末の「招待コードで家に参加する」に入力してもらってください。";
+                    m_CloudMessage = null;
+                }
+            }
+            catch (Exception e)
+            {
+                m_CloudMessage = $"招待コードを作れませんでした：{e.Message}";
+            }
+            finally
+            {
+                m_Syncing = false;
+                Debug.Log($"[HomeCare] {m_CloudMessage ?? m_InviteText}");
+            }
+        }
+
+        async void JoinHome()
+        {
+            m_Syncing = true;
+            m_CloudMessage = "家に参加しています…";
+            try
+            {
+                var result = await CloudSync.JoinAsync(m_Editor.Home, m_JoinCode);
+                m_CloudMessage = result.Message;
+                if (result.Outcome != SyncOutcome.Failed)
+                {
+                    UseHome(result.Home);
+                    m_JoinCode = "";
+                }
+            }
+            catch (Exception e)
+            {
+                m_CloudMessage = $"参加できませんでした：{e.Message}";
+            }
+            finally
+            {
+                m_Syncing = false;
+            }
+            Debug.Log($"[HomeCare] {m_CloudMessage}");
+        }
+
+#if UNITY_EDITOR
+        void SwitchDevice()
+        {
+            DeviceSlot.Toggle();
+            m_Repository = new JsonFileHomeRepository();
+            m_Editor = HomeEditor.LoadOrCreate(m_Repository, "わが家");
+            m_InviteText = null;
+            m_ConfirmJoin = false;
+            m_CloudMessage = $"端末{DeviceSlot.Current}に切り替えました。家のデータとログインは、端末ごとに別になります。";
+            Debug.Log($"[HomeCare] {m_CloudMessage}");
+        }
+#endif
 
         async void SyncWithCloud()
         {
@@ -223,8 +361,7 @@ namespace HomeCare.App
                 m_CloudMessage = result.Message;
                 if (result.Outcome != SyncOutcome.Failed)
                 {
-                    m_Repository.Save(result.Home);
-                    m_Editor = new HomeEditor(result.Home);
+                    UseHome(result.Home);
                 }
             }
             catch (Exception e)
