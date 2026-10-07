@@ -45,6 +45,8 @@ namespace HomeCare.App
             {
                 File.Move(temp, FilePath);
             }
+            // 完了・修正・削除・同期のどれで保存しても、期限のお知らせを作り直す
+            ReminderScheduler.Reschedule(home);
         }
 
         /// <summary>保存したデータを消す（動作確認用）。</summary>
@@ -54,6 +56,7 @@ namespace HomeCare.App
             {
                 File.Delete(FilePath);
             }
+            ReminderScheduler.CancelAll();
         }
     }
 }

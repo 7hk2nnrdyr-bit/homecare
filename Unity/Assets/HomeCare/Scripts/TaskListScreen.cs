@@ -23,6 +23,8 @@ namespace HomeCare.App
         string m_TransferMessage;
         bool m_ShowCloud;
         bool m_ShowRooms;
+        bool m_ShowReminders;
+        string m_ReminderMessage;
         string m_NewRoomName = "";
         string m_RoomMessage;
         bool m_Syncing;
@@ -71,6 +73,13 @@ namespace HomeCare.App
 
             // 起動したときと、カメラの画面から戻ってきたとき（カメラで登録した分を送る）
             RequestAutoSync(0f);
+
+            // 日付が変わっているかもしれないので、期限のお知らせを作り直す。初めてなら通知の許可を聞く
+            ReminderScheduler.Reschedule(m_Editor.Home);
+            if (ReminderScheduler.Enabled)
+            {
+                StartCoroutine(ReminderScheduler.RequestPermission());
+            }
         }
 
         void OnApplicationPause(bool paused)
@@ -79,6 +88,7 @@ namespace HomeCare.App
             if (!paused)
             {
                 RequestAutoSync(0f);
+                ReminderScheduler.Reschedule(m_Editor.Home);
             }
         }
 
@@ -218,6 +228,15 @@ namespace HomeCare.App
             if (m_ShowRooms)
             {
                 DrawRooms();
+            }
+
+            if (GUILayout.Button(m_ShowReminders ? "お知らせ ▲" : "お知らせ ▼", GUILayout.Height(32f)))
+            {
+                m_ShowReminders = !m_ShowReminders;
+            }
+            if (m_ShowReminders)
+            {
+                DrawReminders();
             }
 
             if (GUILayout.Button(m_ShowCloud ? "クラウド ▲" : "クラウド ▼", GUILayout.Height(32f)))
@@ -626,6 +645,74 @@ namespace HomeCare.App
             {
                 m_ConfirmDeleteRoomId = null;
             }
+        }
+
+        void DrawReminders()
+        {
+            GUILayout.BeginVertical(GUI.skin.box);
+            GUILayout.Label("期限の日に、スマホの通知で知らせます。期限が過ぎたままのやることは、7日ごとにもう一度知らせます。");
+            var enabled = GUILayout.Toggle(ReminderScheduler.Enabled, " 期限のお知らせを使う", GUILayout.Height(32f));
+            if (enabled != ReminderScheduler.Enabled)
+            {
+                m_PendingTransfer = () => SetRemindersEnabled(enabled);
+            }
+            if (!string.IsNullOrEmpty(ReminderScheduler.PermissionText))
+            {
+                GUILayout.Label(ReminderScheduler.PermissionText);
+            }
+
+            if (ReminderScheduler.Enabled)
+            {
+                GUILayout.Label("知らせる時刻");
+                var hours = ReminderScheduler.Hours;
+                var current = Array.IndexOf(hours, ReminderScheduler.Hour);
+                var selected = GUILayout.SelectionGrid(current, hours.Select(h => $"{h}時").ToArray(), 4, GUILayout.Height(64f));
+                if (selected != current && selected >= 0)
+                {
+                    m_PendingTransfer = () => SetReminderHour(hours[selected]);
+                }
+
+                GUILayout.Label("これからのお知らせ（先の5回分）");
+                var planned = ReminderScheduler.Planned;
+                if (planned.Count == 0)
+                {
+                    GUILayout.Label("・30日以内に知らせることはありません。");
+                }
+                foreach (var reminder in planned.Take(5))
+                {
+                    GUILayout.Label($"・{reminder.FireAt:M月d日 H:mm}　{reminder.Title}\n　{reminder.Body}");
+                }
+
+                if (GUILayout.Button("試しに10秒後に通知する", GUILayout.Height(32f)))
+                {
+                    m_PendingTransfer = () => m_ReminderMessage = ReminderScheduler.SendTest();
+                }
+            }
+            if (!string.IsNullOrEmpty(m_ReminderMessage))
+            {
+                GUILayout.Label(m_ReminderMessage);
+            }
+            GUILayout.EndVertical();
+        }
+
+        void SetRemindersEnabled(bool enabled)
+        {
+            ReminderScheduler.Enabled = enabled;
+            ReminderScheduler.Reschedule(m_Editor.Home);
+            m_ReminderMessage = enabled ? "期限のお知らせを使います。" : "期限のお知らせを止めました。";
+            if (enabled)
+            {
+                StartCoroutine(ReminderScheduler.RequestPermission());
+            }
+            Debug.Log($"[HomeCare] {m_ReminderMessage}");
+        }
+
+        void SetReminderHour(int hour)
+        {
+            ReminderScheduler.Hour = hour;
+            ReminderScheduler.Reschedule(m_Editor.Home);
+            m_ReminderMessage = $"毎日{hour}時に知らせます（その日に知らせることがあるときだけ）。";
+            Debug.Log($"[HomeCare] {m_ReminderMessage}");
         }
 
         void DrawCloud()
