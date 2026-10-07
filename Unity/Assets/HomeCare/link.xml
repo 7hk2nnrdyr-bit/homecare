@@ -1,0 +1,4 @@
+<!-- コア（HomeCare.Core）は、データの変換に型の情報（リフレクション）を使うので、ビルド時に中身を削らせない -->
+<linker>
+  <assembly fullname="HomeCare.Core" preserve="all" />
+</linker>

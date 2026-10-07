@@ -1,0 +1,81 @@
+# Firebase（クラウド同期）
+
+家のデータを Firebase の Firestore（クラウドのデータベース）に保存し、端末どうしで同じ家を使えるようにする。
+
+## しくみ
+
+```
+画面（TaskListScreen）
+  └─ CloudSync（Unity）……… Firebaseの設定を読んで、下の部品を組み立てる
+       └─ HomeSync（コア）……… 同期の手順。Firebaseのことは知らない
+            └─ ICloudHomeStore …… 「クラウドの保存場所」の共通の形
+                 └─ FirestoreHomeStore（コア）… Firestore版。REST APIで通信する
+                      └─ IHttpTransport …… 実際の通信（Unity：UnityWebRequest、テスト：HttpClient）
+```
+
+- 同期の手順は「ログイン → クラウドの同じ家を取得 → データの受け渡しと同じ決まり（HomeImporter）で合わせる → クラウドと違う分だけを送る」。
+- FirebaseのUnity用SDKは使わず、REST API（普通のHTTP通信）で直接やり取りする。iPhone・Android・Unityエディターで同じコードが動き、SDKの大きなファイルやビルド設定も不要。
+- 保存先を変えたくなったら、`ICloudHomeStore` の別の版を作ればよく、同期の手順や画面は変えずに済む。
+- 置き場所と項目名は [docs/data-format.md](../docs/data-format.md) の「クラウドでの置き場所」。
+
+## ログインと家族共有
+
+- 今は**匿名ログイン**だけ。端末ごとに利用者IDが作られ、アプリを消すまで同じIDを使う。
+- 家のドキュメントに `ownerUid`（持ち主）と `memberUids`（メンバーの利用者ID）を入れている。
+  セキュリティルール（`firestore.rules`）で、メンバーだけがその家を読み書きできる。
+- 家族共有は、`memberUids` に家族の利用者IDを足すことで実現する予定（招待コードなどの仕組みは次の段階）。
+- メールやGoogle・Appleのログインは、匿名の利用者に後から紐づけられるので、データを引き継いだまま追加できる。
+
+## 料金（無料枠）
+
+- Firebaseは無料の **Sparkプラン** のまま使う。支払い方法を登録しないので、料金は発生しない。
+  無料枠を超えると、その日は読み書きが断られるだけ。
+- Firestoreの無料枠は、1日あたり読み取り5万回・書き込み2万回・削除2万回、保存1GiB。
+  同期はクラウドと違う分だけを送るので、開発中に超えることはまず無い。
+- 匿名ログインは無料。
+- **Blazeプラン（従量課金）へのアップグレードはしない。** コンソールで勧められても不要。
+
+## 最初の設定（Firebaseコンソール）
+
+1. https://console.firebase.google.com を開き、Googleアカウントでログインする。
+2. 「プロジェクトを作成」（または「Firebaseプロジェクトを始める」）を押す。
+   - 名前は例えば `homecare`。
+   - Googleアナリティクスは使わないので、オフでよい。
+3. 左のメニューの「構築」→「Authentication」→「始める」。
+   - 「ログイン方法」タブで「匿名」を選び、「有効にする」をオンにして保存する。
+4. 左のメニューの「構築」→「Firestore Database」→「データベースを作成」。
+   - 種類（エディション）を聞かれたら「Standard」。
+   - ロケーションは `asia-northeast1（東京）`。**後から変えられない。**
+   - 「本番環境モード」を選んで作成する。
+5. Firestore Database の「ルール」タブを開き、中身をすべて消して、このフォルダの `firestore.rules` の中身を貼り付け、「公開」を押す。
+6. 左上の歯車 →「プロジェクトの設定」→「全般」で、次の2つを控える。
+   - **プロジェクトID**（例：`homecare-1a2b3`）
+   - **ウェブAPIキー**（`AIza` で始まる文字列）
+   - ウェブAPIキーが「なし」と表示されるときは、同じページの下の「マイアプリ」で `</>`（ウェブ）を押し、
+     ニックネームを付けて登録する。表示された設定の `apiKey` がウェブAPIキー。
+
+ウェブAPIキーは「どのプロジェクトか」を示すもので、合い言葉ではない。データを守るのはログインとセキュリティルール。
+それでも、自分のプロジェクト専用の値なので、Unityの設定ファイルはGitに入れないようにしてある。
+
+## Unityの設定
+
+1. Unityのメニュー「HomeCare」→「Firebaseの設定を作る」を押す。
+   `Assets/HomeCare/Resources/FirebaseSettings.asset` ができて、インスペクターに表示される。
+2. インスペクターの `Project Id` と `Web Api Key` に、上で控えた値を貼り付ける。
+
+## 開発用：エミュレーターでのテスト（任意）
+
+Firebaseエミュレーターは、本物と同じ動きをパソコンの中で再現する道具（料金はかからない）。
+Java と Node.js が必要。コアのテストのうち `FirestoreEmulatorTests` は、エミュレーターを起動したときだけ動く。
+
+```
+cd firebase
+npx firebase-tools emulators:start --only auth,firestore --project demo-homecare
+```
+
+別のターミナルで：
+
+```
+cd core.tests
+FIRESTORE_EMULATOR_HOST=127.0.0.1:8080 FIREBASE_AUTH_EMULATOR_HOST=127.0.0.1:9099 dotnet test
+```

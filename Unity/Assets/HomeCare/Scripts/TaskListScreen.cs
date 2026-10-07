@@ -1,6 +1,7 @@
 using System;
 using HomeCare.Core.Data;
 using HomeCare.Core.Scheduling;
+using HomeCare.Core.Sync;
 using UnityEngine;
 
 namespace HomeCare.App
@@ -19,6 +20,12 @@ namespace HomeCare.App
         Action m_PendingTransfer;
         bool m_ShowTransfer;
         string m_TransferMessage;
+        bool m_ShowCloud;
+        bool m_Syncing;
+#if UNITY_EDITOR
+        bool m_ConfirmDelete;
+#endif
+        string m_CloudMessage;
 
         void Awake()
         {
@@ -34,6 +41,12 @@ namespace HomeCare.App
 
         void Update()
         {
+            // 同期の途中でデータを変えると、同期の結果で上書きされてしまうので待つ
+            if (m_Syncing)
+            {
+                return;
+            }
+
             // 画面を描いている途中で中身が変わらないよう、完了の記録やデータの受け渡しは描画の外で行う
             if (m_PendingTransfer != null)
             {
@@ -73,6 +86,8 @@ namespace HomeCare.App
             var items = m_Editor.DueList(today);
 
             GUILayout.BeginArea(area);
+            // 受け渡しやクラウドの欄を開くと画面に収まらないことがあるので、画面全体をスクロールできるようにする
+            m_Scroll = GUILayout.BeginScrollView(m_Scroll);
             GUILayout.Label("やること一覧（期限の近い順）");
             if (GUILayout.Button("カメラで見る（場所の登録・確認）", GUILayout.Height(44f)))
             {
@@ -88,12 +103,20 @@ namespace HomeCare.App
                 DrawTransfer();
             }
 
+            if (GUILayout.Button(m_ShowCloud ? "クラウド ▲" : "クラウド ▼", GUILayout.Height(32f)))
+            {
+                m_ShowCloud = !m_ShowCloud;
+            }
+            if (m_ShowCloud)
+            {
+                DrawCloud();
+            }
+
             if (items.Count == 0)
             {
                 GUILayout.Label("まだ何も登録されていません。「カメラで見る」から、場所とやることを登録しましょう。");
             }
 
-            m_Scroll = GUILayout.BeginScrollView(m_Scroll);
             foreach (var item in items)
             {
                 GUILayout.BeginHorizontal(GUI.skin.box);
@@ -148,6 +171,79 @@ namespace HomeCare.App
                 GUILayout.Label(m_TransferMessage);
             }
             GUILayout.EndVertical();
+        }
+
+        void DrawCloud()
+        {
+            GUILayout.BeginVertical(GUI.skin.box);
+            GUILayout.Label("この端末の家のデータを、クラウド（Firebase）と同期します。");
+            var previousEnabled = GUI.enabled;
+            GUI.enabled = !m_Syncing;
+            if (GUILayout.Button(m_Syncing ? "同期しています…" : "クラウドと同期", GUILayout.Height(36f)))
+            {
+                m_PendingTransfer = SyncWithCloud;
+            }
+#if UNITY_EDITOR
+            // クラウドからの取得を試すために、端末のデータだけを消す（ログインは残す）
+            if (!m_ConfirmDelete && GUILayout.Button("（Unity）この端末の家のデータを消す", GUILayout.Height(28f)))
+            {
+                m_ConfirmDelete = true;
+            }
+            if (m_ConfirmDelete)
+            {
+                GUILayout.Label("この端末の家のデータを消します。クラウドに同期していない内容は戻せません。");
+                GUILayout.BeginHorizontal();
+                if (GUILayout.Button("消す", GUILayout.Height(28f)))
+                {
+                    m_ConfirmDelete = false;
+                    m_PendingTransfer = DeleteLocalHome;
+                }
+                if (GUILayout.Button("やめる", GUILayout.Height(28f)))
+                {
+                    m_ConfirmDelete = false;
+                }
+                GUILayout.EndHorizontal();
+            }
+#endif
+            GUI.enabled = previousEnabled;
+            if (!string.IsNullOrEmpty(m_CloudMessage))
+            {
+                GUILayout.Label(m_CloudMessage);
+            }
+            GUILayout.EndVertical();
+        }
+
+        async void SyncWithCloud()
+        {
+            m_Syncing = true;
+            m_CloudMessage = "同期しています…";
+            try
+            {
+                var result = await CloudSync.SyncAsync(m_Editor.Home);
+                m_CloudMessage = result.Message;
+                if (result.Outcome != SyncOutcome.Failed)
+                {
+                    m_Repository.Save(result.Home);
+                    m_Editor = new HomeEditor(result.Home);
+                }
+            }
+            catch (Exception e)
+            {
+                m_CloudMessage = $"同期できませんでした：{e.Message}";
+            }
+            finally
+            {
+                m_Syncing = false;
+            }
+            Debug.Log($"[HomeCare] {m_CloudMessage}");
+        }
+
+        void DeleteLocalHome()
+        {
+            m_Repository.Delete();
+            m_Editor = HomeEditor.LoadOrCreate(m_Repository, "わが家");
+            m_CloudMessage = "この端末の家のデータを消しました。「クラウドと同期」でクラウドから取得できます。";
+            Debug.Log($"[HomeCare] {m_CloudMessage}");
         }
 
         void Export()

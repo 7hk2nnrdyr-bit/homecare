@@ -5,7 +5,7 @@ iPhone・Android・将来のクラウドで、同じ形の家のデータを使�
 
 - 端末内の保存：`home.json`（アプリのフォルダ）
 - 端末間の受け渡し：同じJSONをファイルかクリップボードで渡す
-- 第3段階のクラウド同期：同じ形をFirestoreに保存する（下の「クラウドへの移し方」）
+- クラウド同期：同じ形をFirestoreに保存する（下の「クラウドでの置き場所」）
 
 コードでは `core/Runtime/Data/HomeData.cs` がこの形の定義。
 
@@ -98,16 +98,23 @@ iPhoneとAndroidの違いはAR Foundationが吸収し、どちらもUnityと同�
 4. 部屋の基準点は、どちらの端末で足したものも残す
 5. 実施記録は書き換えないので両方を足し合わせ、前回実施日は記録の中で一番新しい日にする
 
-## クラウドへの移し方（第3段階の予定）
+## クラウドでの置き場所（Firestore）
 
 Firestoreでは、家の下に一覧ごとのコレクションを作り、1件を1ドキュメントにする。中身の項目名は上と同じ。
+ドキュメントIDは、そのデータの `id` と同じ。
 
 ```
-homes/{homeId}                     … id, name, schemaVersion, memberUids, ownerUid
+homes/{homeId}                     … id, name, schemaVersion, ownerUid, memberUids
 homes/{homeId}/rooms/{roomId}      … 部屋（localizers を含む）
 homes/{homeId}/points/{pointId}
 homes/{homeId}/tasks/{taskId}
 homes/{homeId}/completions/{completionId}
 ```
 
-端末内の `home.json` はクラウドのキャッシュとして残し、オフラインでも使えるようにする。
+- `ownerUid`：家を作った利用者のID。`memberUids`：家のメンバーの利用者IDの一覧。どちらもクラウドにだけある。
+- 数の配列（`positionInRoom` など）は数の配列、`recurrence` は入れ子の項目（map）として保存する。
+- 日付・時刻は端末内と同じ文字列のまま保存する（並べ替えと新旧の比べ方を端末と同じにするため）。
+- 同期の合わせ方は「受け取ったデータの合わせ方」と同じ。合わせた後、クラウドと中身が違うものだけを送る。
+
+端末内の `home.json` はそのまま残し、オフラインでも使えるようにする。
+接続のしくみと設定のしかたは [firebase/README.md](../firebase/README.md)。
