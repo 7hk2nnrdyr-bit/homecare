@@ -16,6 +16,8 @@ namespace HomeCare.Core.Tests
         private readonly Dictionary<string, HomeData> _homes = new Dictionary<string, HomeData>();
         private readonly Dictionary<string, List<string>> _members = new Dictionary<string, List<string>>();
         private readonly Dictionary<string, HomeInvite> _invites = new Dictionary<string, HomeInvite>();
+        private readonly Dictionary<string, string> _owners = new Dictionary<string, string>();
+        private readonly Dictionary<string, Dictionary<string, HomeMember>> _profiles = new Dictionary<string, Dictionary<string, HomeMember>>();
 
         public string CurrentUid = "user-a";
         public bool Offline;
@@ -30,8 +32,66 @@ namespace HomeCare.Core.Tests
             return Task.FromResult(CurrentUid);
         }
 
-        public Task<HomeData> LoadAsync(string homeId) =>
-            Task.FromResult(_homes.TryGetValue(homeId, out var home) ? Copy(home) : null);
+        public Task<HomeData> LoadAsync(string homeId)
+        {
+            if (!_homes.TryGetValue(homeId, out var home))
+            {
+                return Task.FromResult<HomeData>(null);
+            }
+            EnsureMember(homeId);
+            return Task.FromResult(Copy(home));
+        }
+
+        void EnsureMember(string homeId)
+        {
+            if (!_members[homeId].Contains(CurrentUid))
+            {
+                throw new NotHomeMemberException(null);
+            }
+        }
+
+        public Task<HomeMembership> LoadMembershipAsync(string homeId)
+        {
+            if (!_homes.ContainsKey(homeId))
+            {
+                return Task.FromResult<HomeMembership>(null);
+            }
+            EnsureMember(homeId);
+            return Task.FromResult(new HomeMembership
+            {
+                OwnerUid = _owners[homeId],
+                MemberUids = _members[homeId].ToList(),
+                Profiles = _profiles.TryGetValue(homeId, out var profiles) ? profiles.Values.ToList() : new List<HomeMember>(),
+            });
+        }
+
+        public Task SaveProfileAsync(string homeId, HomeMember profile)
+        {
+            EnsureMember(homeId);
+            if (!_profiles.ContainsKey(homeId))
+            {
+                _profiles[homeId] = new Dictionary<string, HomeMember>();
+            }
+            _profiles[homeId][profile.uid] = profile;
+            return Task.CompletedTask;
+        }
+
+        public Task RemoveMemberAsync(string homeId, string uid)
+        {
+            // クラウドのルールと同じ：自分が抜けるか、持ち主がほかの人を外すかだけ
+            var leaving = uid == CurrentUid && uid != _owners[homeId];
+            var removingByOwner = CurrentUid == _owners[homeId] && uid != CurrentUid;
+            if (!leaving && !removingByOwner)
+            {
+                throw new InvalidOperationException("断られました。");
+            }
+            _members[homeId].Remove(uid);
+            if (_profiles.TryGetValue(homeId, out var profiles))
+            {
+                profiles.Remove(uid);
+            }
+            return Task.CompletedTask;
+        }
 
         public Task<string> FindMyHomeIdAsync() =>
             Task.FromResult(_members.Where(pair => pair.Value.Contains(CurrentUid)).Select(pair => pair.Key).FirstOrDefault());
@@ -68,7 +128,9 @@ namespace HomeCare.Core.Tests
             {
                 _homes[id] = new HomeData { id = id, name = changes.Home.name };
                 _members[id] = new List<string> { CurrentUid };
+                _owners[id] = CurrentUid;
             }
+            EnsureMember(id);
             var stored = _homes[id];
             Upsert(stored.rooms, changes.Rooms, r => r.id);
             Upsert(stored.points, changes.Points, p => p.id);
@@ -272,6 +334,105 @@ namespace HomeCare.Core.Tests
                 Assert.DoesNotContain(code, c => "IO01".IndexOf(c) >= 0);
                 Assert.Equal(code, InviteCode.Normalize(InviteCode.Format(code).ToLowerInvariant()));
             }
+        }
+
+        private static async Task<(FakeCloudHomeStore Cloud, HomeData Home, HomeSync Owner, HomeSync Family)> SharedHomeAsync()
+        {
+            var cloud = new FakeCloudHomeStore();
+            var home = HomeWithOnePoint(out _).Home;
+            var owner = new HomeSync(cloud, () => At(1)) { MyName = "パパのiPhone" };
+            await owner.SyncAsync(home);
+            var invite = await owner.CreateInviteAsync(home);
+            cloud.CurrentUid = "user-b";
+            var family = new HomeSync(cloud, () => At(1)) { MyName = "  ママのGalaxy  " };
+            await family.JoinAsync(EmptyHome(), invite.Invite.code);
+            return (cloud, home, owner, family);
+        }
+
+        [Fact]
+        public async Task メンバー一覧に呼び名と持ち主が出る()
+        {
+            var (cloud, home, _, family) = await SharedHomeAsync();
+
+            var result = await family.LoadMembersAsync(home);
+
+            Assert.True(result.Ok, result.Message);
+            Assert.False(result.IAmOwner);
+            Assert.Equal(new[] { "パパのiPhone", "ママのGalaxy" }, result.Members.Select(m => m.Name));
+            Assert.True(result.Members[0].IsOwner);
+            Assert.True(result.Members[1].IsMe);
+        }
+
+        [Fact]
+        public async Task 呼び名を変えて同期すると一覧も変わり呼び名が無ければIDの頭で見分ける()
+        {
+            var (cloud, home, _, family) = await SharedHomeAsync();
+            cloud.CurrentUid = "user-a";
+            var ownerWithoutName = new HomeSync(cloud);
+            await ownerWithoutName.SyncAsync(home);
+
+            cloud.CurrentUid = "user-b";
+            family.MyName = "ママ";
+            await family.SyncAsync(home);
+            var result = await family.LoadMembersAsync(home);
+
+            Assert.Equal(new[] { "（呼び名なし・user）", "ママ" }, result.Members.Select(m => m.Name));
+        }
+
+        [Fact]
+        public async Task 家族は家から抜けられ抜けた後は同期できない()
+        {
+            var (cloud, home, _, family) = await SharedHomeAsync();
+
+            var left = await family.LeaveAsync(home);
+            var sync = await family.SyncAsync(home);
+
+            Assert.True(left.Ok, left.Message);
+            Assert.Equal(new[] { "user-a" }, cloud.MembersOf(home.id));
+            Assert.Equal(SyncOutcome.Failed, sync.Outcome);
+            Assert.Contains("メンバーから外れています", sync.Message);
+        }
+
+        [Fact]
+        public async Task 持ち主は抜けられない()
+        {
+            var (cloud, home, owner, _) = await SharedHomeAsync();
+            cloud.CurrentUid = "user-a";
+
+            var result = await owner.LeaveAsync(home);
+
+            Assert.False(result.Ok);
+            Assert.Equal(2, cloud.MembersOf(home.id).Count);
+        }
+
+        [Fact]
+        public async Task 持ち主だけがほかのメンバーを外せる()
+        {
+            var (cloud, home, owner, family) = await SharedHomeAsync();
+            var membersSeenByFamily = (await family.LoadMembersAsync(home)).Members;
+
+            var byFamily = await family.RemoveMemberAsync(home, membersSeenByFamily[0]);
+            cloud.CurrentUid = "user-a";
+            var byOwner = await owner.RemoveMemberAsync(home, membersSeenByFamily[1]);
+            var after = await owner.LoadMembersAsync(home);
+
+            Assert.False(byFamily.Ok);
+            Assert.True(byOwner.Ok, byOwner.Message);
+            Assert.Equal(new[] { "パパのiPhone" }, after.Members.Select(m => m.Name));
+        }
+
+        [Fact]
+        public async Task 外された後に抜けると端末のデータだけ片付ける()
+        {
+            var (cloud, home, owner, family) = await SharedHomeAsync();
+            cloud.CurrentUid = "user-a";
+            await owner.RemoveMemberAsync(home, (await owner.LoadMembersAsync(home)).Members[1]);
+
+            cloud.CurrentUid = "user-b";
+            var result = await family.LeaveAsync(home);
+
+            Assert.True(result.Ok);
+            Assert.Contains("片付け", result.Message);
         }
 }
 }

@@ -131,9 +131,8 @@ namespace HomeCare.Core.Tests
 
             var stranger = NewDevice();
             await stranger.SignInAsync();
-            var error = await Assert.ThrowsAsync<FirebaseException>(() => stranger.LoadAsync(home.id));
+            await Assert.ThrowsAsync<NotHomeMemberException>(() => stranger.LoadAsync(home.id));
 
-            Assert.Equal(403, error.Status);
             Assert.Null(await stranger.FindMyHomeIdAsync());
         }
 
@@ -273,6 +272,82 @@ namespace HomeCare.Core.Tests
             }));
 
             Assert.False(strangerInvite.Ok);
+            Assert.Equal(403, error.Status);
+        }
+
+        [Fact]
+        public async Task 呼び名がメンバー一覧に出て家族は抜けられる()
+        {
+            if (!EmulatorRunning) return;
+            var (home, invite, ownerTokens) = await SharedHomeAsync();
+            var owner = new HomeSync(NewDevice(ownerTokens)) { MyName = "パパ" };
+            await owner.SyncAsync(home);
+            var family = new HomeSync(NewDevice()) { MyName = "ママ" };
+            await family.JoinAsync(EmptyHome(), invite.Invite.code);
+
+            var members = await family.LoadMembersAsync(home);
+            var left = await family.LeaveAsync(home);
+            var afterLeave = await owner.LoadMembersAsync(home);
+            var familySync = await family.SyncAsync(home);
+
+            Assert.Equal(new[] { "パパ", "ママ" }, members.Members.Select(m => m.Name));
+            Assert.True(left.Ok, left.Message);
+            Assert.Equal(new[] { "パパ" }, afterLeave.Members.Select(m => m.Name));
+            Assert.Contains("メンバーから外れています", familySync.Message);
+        }
+
+        [Fact]
+        public async Task 持ち主はほかのメンバーを外せるが自分は抜けられない()
+        {
+            if (!EmulatorRunning) return;
+            var (home, invite, ownerTokens) = await SharedHomeAsync();
+            var owner = new HomeSync(NewDevice(ownerTokens));
+            var family = new HomeSync(NewDevice()) { MyName = "ママ" };
+            await family.JoinAsync(EmptyHome(), invite.Invite.code);
+
+            var ownerLeave = await owner.LeaveAsync(home);
+            var removed = await owner.RemoveMemberAsync(home, (await owner.LoadMembersAsync(home)).Members[1]);
+            var after = await owner.LoadMembersAsync(home);
+
+            Assert.False(ownerLeave.Ok);
+            Assert.True(removed.Ok, removed.Message);
+            Assert.Single(after.Members);
+        }
+
+        [Fact]
+        public async Task 家族はほかのメンバーを外せず持ち主を消すこともできない()
+        {
+            if (!EmulatorRunning) return;
+            var (home, invite, ownerTokens) = await SharedHomeAsync();
+            var familyA = new InMemoryTokenStore();
+            var familyB = new InMemoryTokenStore();
+            var a = new HomeSync(NewDevice(familyA));
+            await a.JoinAsync(EmptyHome(), invite.Invite.code);
+            await new HomeSync(NewDevice(familyB)).JoinAsync(EmptyHome(), invite.Invite.code);
+            var members = (await a.LoadMembersAsync(home)).Members;
+
+            // アプリを通さず、直接ほかの人を消そうとする
+            var store = NewDevice(familyA);
+            var removeOwner = await Assert.ThrowsAsync<FirebaseException>(() => store.RemoveMemberAsync(home.id, members[0].Uid));
+            var removeOther = await Assert.ThrowsAsync<FirebaseException>(() => store.RemoveMemberAsync(home.id, members[2].Uid));
+
+            Assert.Equal(403, removeOwner.Status);
+            Assert.Equal(403, removeOther.Status);
+            Assert.Equal(3, (await a.LoadMembersAsync(home)).Members.Count);
+        }
+
+        [Fact]
+        public async Task ほかの人の呼び名は書き換えられない()
+        {
+            if (!EmulatorRunning) return;
+            var (home, invite, ownerTokens) = await SharedHomeAsync();
+            var familyTokens = new InMemoryTokenStore();
+            await new HomeSync(NewDevice(familyTokens)).JoinAsync(EmptyHome(), invite.Invite.code);
+            var ownerUid = await NewDevice(ownerTokens).SignInAsync();
+
+            var error = await Assert.ThrowsAsync<FirebaseException>(() =>
+                NewDevice(familyTokens).SaveProfileAsync(home.id, new HomeMember { uid = ownerUid, name = "なりすまし", updatedAt = "" }));
+
             Assert.Equal(403, error.Status);
         }
 }

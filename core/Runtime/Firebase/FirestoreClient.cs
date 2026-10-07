@@ -33,6 +33,13 @@ namespace HomeCare.Core.Firebase
         /// <summary>配列の項目に、まだ入っていない値を足す（例：memberUids に自分を足す）。</summary>
         public string AppendToArrayField;
         public List<object> AppendToArrayValues;
+
+        /// <summary>配列の項目から、この値をすべて取り除く（例：memberUids から自分を消す）。</summary>
+        public string RemoveFromArrayField;
+        public List<object> RemoveFromArrayValues;
+
+        /// <summary>true なら、書き込む代わりにドキュメントを消す（Document.Path だけを使う）。</summary>
+        public bool Delete;
     }
 
     /// <summary>
@@ -141,6 +148,10 @@ namespace HomeCare.Core.Firebase
 
         Dictionary<string, object> ToWriteJson(FirestoreWrite write)
         {
+            if (write.Delete)
+            {
+                return new Dictionary<string, object> { ["delete"] = $"{DatabaseName}/documents/{write.Document.Path}" };
+            }
             var json = new Dictionary<string, object>
             {
                 ["update"] = new Dictionary<string, object>
@@ -157,22 +168,31 @@ namespace HomeCare.Core.Firebase
             {
                 json["currentDocument"] = new Dictionary<string, object> { ["exists"] = write.MustExist };
             }
+            var transforms = new List<object>();
             if (write.AppendToArrayField != null)
             {
-                json["updateTransforms"] = new List<object>
-                {
-                    new Dictionary<string, object>
-                    {
-                        ["fieldPath"] = write.AppendToArrayField,
-                        ["appendMissingElements"] = new Dictionary<string, object>
-                        {
-                            ["values"] = write.AppendToArrayValues.Select(v => (object)EncodeValue(v)).ToList(),
-                        },
-                    },
-                };
+                transforms.Add(ArrayTransform(write.AppendToArrayField, "appendMissingElements", write.AppendToArrayValues));
+            }
+            if (write.RemoveFromArrayField != null)
+            {
+                transforms.Add(ArrayTransform(write.RemoveFromArrayField, "removeAllFromArray", write.RemoveFromArrayValues));
+            }
+            if (transforms.Count > 0)
+            {
+                json["updateTransforms"] = transforms;
             }
             return json;
         }
+
+        static Dictionary<string, object> ArrayTransform(string field, string kind, List<object> values) =>
+            new Dictionary<string, object>
+            {
+                ["fieldPath"] = field,
+                [kind] = new Dictionary<string, object>
+                {
+                    ["values"] = values.Select(v => (object)EncodeValue(v)).ToList(),
+                },
+            };
 
         FirestoreDocument ToDocument(Dictionary<string, object> json)
         {
