@@ -11,8 +11,9 @@ namespace HomeCare.App
     /// </summary>
     public class PointForm : MonoBehaviour
     {
-        static readonly string[] k_UnitLabels = { "日", "週", "か月", "年" };
-        static readonly RecurrenceUnit[] k_Units =
+        // 一覧画面の「修正」でも同じ選び方を使う
+        internal static readonly string[] k_UnitLabels = { "日", "週", "か月", "年" };
+        internal static readonly RecurrenceUnit[] k_Units =
             { RecurrenceUnit.Day, RecurrenceUnit.Week, RecurrenceUnit.Month, RecurrenceUnit.Year };
 
         const float k_Width = 320f;
