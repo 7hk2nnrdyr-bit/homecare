@@ -29,11 +29,16 @@ namespace HomeCare.App
         string m_InviteText;
         string m_JoinCode = "";
         bool m_ConfirmJoin;
+        string m_NameInput;
+        MembersResult m_Members;
+        bool m_ConfirmLeave;
+        MemberView m_ConfirmRemove;
 
         void Awake()
         {
             m_Repository = new JsonFileHomeRepository();
             m_Editor = HomeEditor.LoadOrCreate(m_Repository, "わが家");
+            m_NameInput = CloudSync.MyName;
         }
 
         void Start()
@@ -234,6 +239,8 @@ namespace HomeCare.App
                 GUILayout.EndHorizontal();
             }
 
+            DrawMembers();
+
 #if UNITY_EDITOR
             // ---- Unityでの動作確認用 ----
             GUILayout.Space(8f);
@@ -265,6 +272,162 @@ namespace HomeCare.App
 #endif
             GUI.enabled = previousEnabled;
             GUILayout.EndVertical();
+        }
+
+        void DrawMembers()
+        {
+            GUILayout.Space(8f);
+            GUILayout.Label("■ この家のメンバー");
+            GUILayout.Label($"この端末の呼び名（{MemberName.MaxLength}文字まで。例：パパのiPhone）");
+            m_NameInput = GUILayout.TextField(m_NameInput ?? "", MemberName.MaxLength, GUILayout.Height(32f));
+            if (GUILayout.Button("呼び名を保存してメンバーを表示", GUILayout.Height(36f)))
+            {
+                m_PendingTransfer = ShowMembers;
+            }
+            if (m_Members == null || !m_Members.Ok)
+            {
+                return;
+            }
+
+            foreach (var member in m_Members.Members)
+            {
+                var marks = (member.IsOwner ? "（持ち主）" : "") + (member.IsMe ? "（この端末）" : "");
+                GUILayout.BeginHorizontal();
+                GUILayout.Label($"・{member.Name}{marks}");
+                // 持ち主だけが、ほかのメンバーを外せる（なくした端末やアプリを入れ直す前の端末など）
+                if (m_Members.IAmOwner && !member.IsMe && m_ConfirmRemove == null
+                    && GUILayout.Button("外す", GUILayout.Width(80f), GUILayout.Height(28f)))
+                {
+                    m_ConfirmRemove = member;
+                }
+                GUILayout.EndHorizontal();
+            }
+            if (m_ConfirmRemove != null)
+            {
+                GUILayout.Label($"「{m_ConfirmRemove.Name}」をこの家のメンバーから外します。その端末では、この家を見られなくなります。");
+                GUILayout.BeginHorizontal();
+                if (GUILayout.Button("外す", GUILayout.Height(32f)))
+                {
+                    m_PendingTransfer = RemoveMember;
+                }
+                if (GUILayout.Button("やめる", GUILayout.Height(32f)))
+                {
+                    m_ConfirmRemove = null;
+                }
+                GUILayout.EndHorizontal();
+            }
+
+            // 持ち主は抜けられない（家族が使えなくならないように）
+            if (m_Members.IAmOwner)
+            {
+                return;
+            }
+            if (!m_ConfirmLeave && GUILayout.Button("この家から抜ける", GUILayout.Height(32f)))
+            {
+                m_ConfirmLeave = true;
+            }
+            if (m_ConfirmLeave)
+            {
+                GUILayout.Label("この家から抜けます。この端末の家のデータは消えます（クラウドの家は残り、家族は使い続けられます）。");
+                GUILayout.BeginHorizontal();
+                if (GUILayout.Button("抜ける", GUILayout.Height(32f)))
+                {
+                    m_ConfirmLeave = false;
+                    m_PendingTransfer = LeaveHome;
+                }
+                if (GUILayout.Button("やめる", GUILayout.Height(32f)))
+                {
+                    m_ConfirmLeave = false;
+                }
+                GUILayout.EndHorizontal();
+            }
+        }
+
+        /// <summary>呼び名を保存し、同期して（呼び名がクラウドに届く）、メンバー一覧を取得する。</summary>
+        async void ShowMembers()
+        {
+            m_Syncing = true;
+            m_Members = null;
+            m_ConfirmLeave = false;
+            m_ConfirmRemove = null;
+            m_CloudMessage = "メンバーを取得しています…";
+            try
+            {
+                CloudSync.MyName = m_NameInput;
+                m_NameInput = CloudSync.MyName;
+                var synced = await CloudSync.SyncAsync(m_Editor.Home);
+                if (synced.Outcome == SyncOutcome.Failed)
+                {
+                    m_CloudMessage = synced.Message;
+                    return;
+                }
+                UseHome(synced.Home);
+                m_Members = await CloudSync.LoadMembersAsync(m_Editor.Home);
+                m_CloudMessage = m_Members.Message;
+            }
+            catch (Exception e)
+            {
+                m_CloudMessage = $"メンバーを取得できませんでした：{e.Message}";
+            }
+            finally
+            {
+                m_Syncing = false;
+            }
+            Debug.Log($"[HomeCare] {m_CloudMessage}");
+        }
+
+        async void LeaveHome()
+        {
+            m_Syncing = true;
+            m_CloudMessage = "家から抜けています…";
+            try
+            {
+                var result = await CloudSync.LeaveAsync(m_Editor.Home);
+                m_CloudMessage = result.Message;
+                if (result.Ok)
+                {
+                    // 抜けた家のデータは端末に残さず、新しい空の家から始める
+                    m_Repository.Delete();
+                    m_Editor = HomeEditor.LoadOrCreate(m_Repository, "わが家");
+                    m_Members = null;
+                }
+            }
+            catch (Exception e)
+            {
+                m_CloudMessage = $"抜けられませんでした：{e.Message}";
+            }
+            finally
+            {
+                m_Syncing = false;
+            }
+            Debug.Log($"[HomeCare] {m_CloudMessage}");
+        }
+
+        async void RemoveMember()
+        {
+            var member = m_ConfirmRemove;
+            m_ConfirmRemove = null;
+            m_Syncing = true;
+            m_CloudMessage = "メンバーを外しています…";
+            try
+            {
+                var result = await CloudSync.RemoveMemberAsync(m_Editor.Home, member);
+                m_CloudMessage = result.Message;
+                if (result.Ok)
+                {
+                    var members = await CloudSync.LoadMembersAsync(m_Editor.Home);
+                    m_Members = members.Ok ? members : null;
+                }
+            }
+            catch (Exception e)
+            {
+                m_CloudMessage = $"外せませんでした：{e.Message}";
+            }
+            finally
+            {
+                m_Syncing = false;
+            }
+            Debug.Log($"[HomeCare] {m_CloudMessage}");
         }
 
         /// <summary>同期や参加で受け取った家のデータを、この端末に保存して画面に出す。</summary>
@@ -325,6 +488,7 @@ namespace HomeCare.App
                 {
                     UseHome(result.Home);
                     m_JoinCode = "";
+                    m_Members = null;
                 }
             }
             catch (Exception e)
@@ -346,6 +510,10 @@ namespace HomeCare.App
             m_Editor = HomeEditor.LoadOrCreate(m_Repository, "わが家");
             m_InviteText = null;
             m_ConfirmJoin = false;
+            m_Members = null;
+            m_ConfirmLeave = false;
+            m_ConfirmRemove = null;
+            m_NameInput = CloudSync.MyName;
             m_CloudMessage = $"端末{DeviceSlot.Current}に切り替えました。家のデータとログインは、端末ごとに別になります。";
             Debug.Log($"[HomeCare] {m_CloudMessage}");
         }
@@ -379,6 +547,7 @@ namespace HomeCare.App
         {
             m_Repository.Delete();
             m_Editor = HomeEditor.LoadOrCreate(m_Repository, "わが家");
+            m_Members = null;
             m_CloudMessage = "この端末の家のデータを消しました。「クラウドと同期」でクラウドから取得できます。";
             Debug.Log($"[HomeCare] {m_CloudMessage}");
         }

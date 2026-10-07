@@ -14,6 +14,8 @@ namespace HomeCare.Core.Firebase
     ///   homes/{家ID}/points/{ポイントID}
     ///   homes/{家ID}/tasks/{タスクID}
     ///   homes/{家ID}/completions/{記録ID}
+    ///   homes/{家ID}/members/{利用者ID}     … メンバーの呼び名（各端末が自分の分だけ書く）
+    ///   invites/{招待コード}
     /// 中身の項目名は端末内のJSONと同じ。memberUids（家のメンバーの利用者ID）が、家族共有の入り口になる。
     /// </summary>
     public class FirestoreHomeStore : ICloudHomeStore
@@ -24,6 +26,7 @@ namespace HomeCare.Core.Firebase
         public const string Tasks = "tasks";
         public const string Completions = "completions";
         public const string Invites = "invites";
+        public const string Members = "members";
 
         private readonly FirebaseAuthClient _auth;
         private readonly FirestoreClient _db;
@@ -40,7 +43,7 @@ namespace HomeCare.Core.Firebase
 
         public async Task<HomeData> LoadAsync(string homeId)
         {
-            var homeDoc = await _db.GetAsync($"{Homes}/{homeId}");
+            var homeDoc = await GetHomeAsync(homeId);
             if (homeDoc == null)
             {
                 return null;
@@ -128,6 +131,63 @@ namespace HomeCare.Core.Firebase
                     AppendToArrayValues = new List<object> { uid },
                 },
             });
+        }
+
+        public async Task<HomeMembership> LoadMembershipAsync(string homeId)
+        {
+            var homeDoc = await GetHomeAsync(homeId);
+            if (homeDoc == null)
+            {
+                return null;
+            }
+            return new HomeMembership
+            {
+                OwnerUid = homeDoc.Fields.TryGetValue("ownerUid", out var owner) ? owner as string : null,
+                MemberUids = homeDoc.Fields.TryGetValue("memberUids", out var members) && members is List<object> list
+                    ? list.OfType<string>().ToList()
+                    : new List<string>(),
+                Profiles = await LoadListAsync<HomeMember>(homeId, Members),
+            };
+        }
+
+        public async Task SaveProfileAsync(string homeId, HomeMember profile)
+        {
+            await _auth.SignInAsync();
+            await _db.CommitAsync(new[] { Write(homeId, Members, profile.uid, profile) });
+        }
+
+        /// <summary>
+        /// メンバー一覧からその人を消し、呼び名も消す。ルールで「自分が抜ける」か「持ち主が外す」かを確かめる。
+        /// 家のほかの項目には触れない。
+        /// </summary>
+        public async Task RemoveMemberAsync(string homeId, string uid)
+        {
+            await _auth.SignInAsync();
+            await _db.CommitAsync(new[]
+            {
+                new FirestoreWrite
+                {
+                    Document = Doc($"{Homes}/{homeId}", new Dictionary<string, object>()),
+                    OnlyFields = new List<string>(),
+                    MustExist = true,
+                    RemoveFromArrayField = "memberUids",
+                    RemoveFromArrayValues = new List<object> { uid },
+                },
+                new FirestoreWrite { Document = Doc($"{Homes}/{homeId}/{Members}/{uid}", null), Delete = true },
+            });
+        }
+
+        /// <summary>家のドキュメントを取得する。メンバーでなくて断られたら NotHomeMemberException にする。</summary>
+        async Task<FirestoreDocument> GetHomeAsync(string homeId)
+        {
+            try
+            {
+                return await _db.GetAsync($"{Homes}/{homeId}");
+            }
+            catch (FirebaseException e) when (e.Status == 403)
+            {
+                throw new NotHomeMemberException(e);
+            }
         }
 
         async Task<List<T>> LoadListAsync<T>(string homeId, string collection) where T : new() =>

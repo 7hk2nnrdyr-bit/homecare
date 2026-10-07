@@ -38,6 +38,28 @@ service cloud.firestore {
         && request.time.toMillis() < invite.data.expiresAtMillis;
     }
 
+    // 自分が家から抜けるときの決まり：
+    // ・メンバー一覧から自分だけを消す（ほかの人は消せない）
+    // ・家を作った持ち主は抜けられない（家族が使えなくならないように）
+    function isLeaving() {
+      return signedIn()
+        && request.auth.uid in resource.data.memberUids
+        && request.auth.uid != resource.data.ownerUid
+        && request.resource.data.memberUids == resource.data.memberUids.removeAll([request.auth.uid])
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['memberUids']);
+    }
+
+    // 持ち主がほかのメンバーを外すときの決まり：
+    // ・1人だけを消す。足したり、持ち主自身を消したりはできない
+    function isRemovingByOwner() {
+      return signedIn()
+        && request.auth.uid == resource.data.ownerUid
+        && request.auth.uid in request.resource.data.memberUids
+        && resource.data.memberUids.hasAll(request.resource.data.memberUids)
+        && request.resource.data.memberUids.size() == resource.data.memberUids.size() - 1
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['memberUids']);
+    }
+
     match /homes/{homeId} {
       // まだ無い家を取得しようとしたときは「無い」と返す（家IDは推測できないUUID）
       allow get: if signedIn() && (resource == null || request.auth.uid in resource.data.memberUids);
@@ -51,12 +73,14 @@ service cloud.firestore {
         && request.resource.data.memberUids == [request.auth.uid];
 
       // メンバーは家の名前などを変えられるが、持ち主とメンバー一覧は変えられない。
-      // メンバー以外は、招待コードを使って自分をメンバーに足すことだけができる
+      // メンバー一覧を変えられるのは、招待コードで参加する・自分が抜ける・持ち主が外す、の3つだけ
       allow update: if (signedIn()
           && request.auth.uid in resource.data.memberUids
           && request.resource.data.ownerUid == resource.data.ownerUid
           && request.resource.data.memberUids == resource.data.memberUids)
-        || isJoiningWithInvite(homeId);
+        || isJoiningWithInvite(homeId)
+        || isLeaving()
+        || isRemovingByOwner();
 
       // 削除は deletedAt で行うので、ドキュメントは消させない
       allow delete: if false;
@@ -67,6 +91,19 @@ service cloud.firestore {
           && isMemberAfterWrite(homeId)
           && request.resource.data.id == docId;
         allow delete: if false;
+      }
+
+      // メンバーの呼び名。読むのは上の決まり（メンバーなら読める）。
+      // 書けるのは自分の分だけ。消せるのは、抜ける本人か家の持ち主
+      match /members/{uid} {
+        allow create, update: if signedIn()
+          && request.auth.uid == uid
+          && request.resource.data.uid == uid
+          && request.resource.data.name is string
+          && request.resource.data.name.size() <= 20
+          && isMemberAfterWrite(homeId);
+        allow delete: if signedIn()
+          && (request.auth.uid == uid || request.auth.uid == get(homePath(homeId)).data.ownerUid);
       }
     }
 
