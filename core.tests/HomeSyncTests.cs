@@ -434,5 +434,36 @@ namespace HomeCare.Core.Tests
             Assert.True(result.Ok);
             Assert.Contains("片付け", result.Message);
         }
+
+        [Fact]
+        public async Task 自動同期ではクラウドに家を新しく作らない()
+        {
+            var cloud = new FakeCloudHomeStore();
+            var home = HomeWithOnePoint(out _).Home;
+
+            var auto = await new HomeSync(cloud).SyncAsync(home, createIfMissing: false);
+            var empty = await new HomeSync(cloud).SyncAsync(EmptyHome(), createIfMissing: false);
+
+            Assert.Equal(SyncOutcome.Skipped, auto.Outcome);
+            Assert.Same(home, auto.Home);
+            Assert.Equal(SyncOutcome.Skipped, empty.Outcome);
+            Assert.Empty(cloud.Saved);
+        }
+
+        [Fact]
+        public async Task 自動同期でもクラウドにある家とは合わせ空の端末には取得する()
+        {
+            var cloud = new FakeCloudHomeStore();
+            var editor = HomeWithOnePoint(out var task);
+            await new HomeSync(cloud).SyncAsync(editor.Home);
+            new HomeEditor(editor.Home, () => At(2)).CompleteTask(task.id, new DateTime(2026, 10, 6));
+
+            var auto = await new HomeSync(cloud).SyncAsync(editor.Home, createIfMissing: false);
+            var reinstalled = await new HomeSync(cloud).SyncAsync(EmptyHome(), createIfMissing: false);
+
+            Assert.Contains("送信2件", auto.Message);
+            Assert.Equal(SyncOutcome.Downloaded, reinstalled.Outcome);
+            Assert.Equal("2026-10-06", reinstalled.Home.tasks.Single().lastDoneDate);
+        }
 }
 }

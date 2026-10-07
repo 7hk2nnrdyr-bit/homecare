@@ -19,6 +19,9 @@ namespace HomeCare.Core.Sync
 
         /// <summary>同期できなかった。理由は Message にある。この端末のデータは変えていない。</summary>
         Failed,
+
+        /// <summary>クラウドにまだ家が無く、作らない指定だったので何もしなかった（自動同期のとき）。</summary>
+        Skipped,
     }
 
     public class InviteResult
@@ -82,7 +85,11 @@ namespace HomeCare.Core.Sync
             _utcNow = utcNow ?? (() => DateTime.UtcNow);
         }
 
-        public async Task<SyncResult> SyncAsync(HomeData original)
+        /// <param name="createIfMissing">
+        /// false なら、クラウドにまだ家が無いときに新しく作らない（自動同期用）。
+        /// 家をクラウドに置くかどうかは、利用者が「クラウドと同期」を押して決める。
+        /// </param>
+        public async Task<SyncResult> SyncAsync(HomeData original, bool createIfMissing = true)
         {
             // Unityでは通信の続きを画面と同じ流れで動かす必要があるので、ConfigureAwait(false) は使わない
             try
@@ -107,6 +114,11 @@ namespace HomeCare.Core.Sync
                         await SaveProfileAsync(adopted.Home.id, uid);
                         return new SyncResult(SyncOutcome.Downloaded, adopted.Home, $"クラウドから取得しました（{adopted.ChangedCount}件）。");
                     }
+                }
+
+                if (remote == null && !createIfMissing)
+                {
+                    return new SyncResult(SyncOutcome.Skipped, original, "この家はまだクラウドにありません。「クラウドと同期」を押すと保存されます。");
                 }
 
                 if (remote == null)

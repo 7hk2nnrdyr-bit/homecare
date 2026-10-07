@@ -47,10 +47,11 @@ namespace HomeCare.App
             return true;
         }
 
-        public static async Task<SyncResult> SyncAsync(HomeData home)
+        /// <param name="createIfMissing">false なら、クラウドにまだ家が無いときに作らない（自動同期用）。</param>
+        public static async Task<SyncResult> SyncAsync(HomeData home, bool createIfMissing = true)
         {
             var sync = GetSync(out var whatToDo);
-            return sync == null ? new SyncResult(SyncOutcome.Failed, home, whatToDo) : await sync.SyncAsync(home);
+            return sync == null ? new SyncResult(SyncOutcome.Failed, home, whatToDo) : await sync.SyncAsync(home, createIfMissing);
         }
 
         public static async Task<InviteResult> CreateInviteAsync(HomeData home)

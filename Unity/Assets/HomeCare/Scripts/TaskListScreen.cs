@@ -34,6 +34,11 @@ namespace HomeCare.App
         bool m_ConfirmLeave;
         MemberView m_ConfirmRemove;
 
+        // 自動同期：アプリを開いたとき・戻ってきたとき・この画面で変更したときに、ボタンを押さなくても同期する
+        const float AutoSyncDelayAfterChange = 3f;
+        float m_AutoSyncAt = -1f;
+        string m_AutoSyncStatus;
+
         void Awake()
         {
             m_Repository = new JsonFileHomeRepository();
@@ -45,6 +50,67 @@ namespace HomeCare.App
         {
             // アプリの起動時はARが自動で動き出すので、リスト画面では止めておく
             AppScenes.StopAR();
+
+            // 起動したときと、カメラの画面から戻ってきたとき（カメラで登録した分を送る）
+            RequestAutoSync(0f);
+        }
+
+        void OnApplicationPause(bool paused)
+        {
+            // ほかのアプリから戻ってきたとき（その間に家族が変えた分を受け取る）
+            if (!paused)
+            {
+                RequestAutoSync(0f);
+            }
+        }
+
+        /// <summary>
+        /// 少し後に自動同期する。続けて変更したときは、最後の変更から数秒待ってまとめて1回にする。
+        /// Firebaseの設定が済んでいなければ何もしない。
+        /// </summary>
+        void RequestAutoSync(float delaySeconds)
+        {
+            if (!CloudSync.IsConfigured(out _))
+            {
+                return;
+            }
+            m_AutoSyncAt = Time.realtimeSinceStartup + delaySeconds;
+        }
+
+        async void AutoSync()
+        {
+            m_Syncing = true;
+            m_AutoSyncStatus = "自動同期：通信しています…";
+            try
+            {
+                // クラウドにまだ家が無ければ作らない（作るのは「クラウドと同期」を押したとき）
+                var result = await CloudSync.SyncAsync(m_Editor.Home, createIfMissing: false);
+                switch (result.Outcome)
+                {
+                    case SyncOutcome.Failed:
+                        m_AutoSyncStatus = $"自動同期：できませんでした（{DateTime.Now:H:mm}）。{result.Message}";
+                        break;
+                    case SyncOutcome.Skipped:
+                        m_AutoSyncStatus = null;
+                        break;
+                    default:
+                        UseHome(result.Home);
+                        m_AutoSyncStatus = $"自動同期：{DateTime.Now:H:mm} {result.Message}";
+                        break;
+                }
+            }
+            catch (Exception e)
+            {
+                m_AutoSyncStatus = $"自動同期：できませんでした。{e.Message}";
+            }
+            finally
+            {
+                m_Syncing = false;
+            }
+            if (m_AutoSyncStatus != null)
+            {
+                Debug.Log($"[HomeCare] {m_AutoSyncStatus}");
+            }
         }
 
         void Update()
@@ -52,6 +118,13 @@ namespace HomeCare.App
             // 同期の途中でデータを変えると、同期の結果で上書きされてしまうので待つ
             if (m_Syncing)
             {
+                return;
+            }
+
+            if (m_AutoSyncAt >= 0f && Time.realtimeSinceStartup >= m_AutoSyncAt)
+            {
+                m_AutoSyncAt = -1f;
+                AutoSync();
                 return;
             }
 
@@ -78,6 +151,7 @@ namespace HomeCare.App
             {
                 m_Repository.Save(m_Editor.Home);
                 Debug.Log($"[HomeCare] 「{task.title}」を完了しました。次回期限：{DataFormat.FormatDate(HomeEditor.NextDueDate(task))}");
+                RequestAutoSync(AutoSyncDelayAfterChange);
             }
             catch (Exception e)
             {
@@ -97,6 +171,10 @@ namespace HomeCare.App
             // 受け渡しやクラウドの欄を開くと画面に収まらないことがあるので、画面全体をスクロールできるようにする
             m_Scroll = GUILayout.BeginScrollView(m_Scroll);
             GUILayout.Label("やること一覧（期限の近い順）");
+            if (!string.IsNullOrEmpty(m_AutoSyncStatus))
+            {
+                GUILayout.Label(m_AutoSyncStatus);
+            }
             if (GUILayout.Button("カメラで見る（場所の登録・確認）", GUILayout.Height(44f)))
             {
                 AppScenes.OpenCamera();
@@ -514,6 +592,8 @@ namespace HomeCare.App
             m_ConfirmLeave = false;
             m_ConfirmRemove = null;
             m_NameInput = CloudSync.MyName;
+            m_AutoSyncStatus = null;
+            RequestAutoSync(0f);
             m_CloudMessage = $"端末{DeviceSlot.Current}に切り替えました。家のデータとログインは、端末ごとに別になります。";
             Debug.Log($"[HomeCare] {m_CloudMessage}");
         }
@@ -574,6 +654,7 @@ namespace HomeCare.App
                 {
                     m_Repository.Save(result.Home);
                     m_Editor = new HomeEditor(result.Home);
+                    RequestAutoSync(AutoSyncDelayAfterChange);
                 }
                 catch (Exception e)
                 {
