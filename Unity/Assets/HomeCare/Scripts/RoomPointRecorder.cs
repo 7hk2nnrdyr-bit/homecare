@@ -4,6 +4,7 @@ using System.Linq;
 using HomeCare.Core.Data;
 using HomeCare.Core.Scheduling;
 using HomeCare.Core.Spatial;
+using HomeCare.Core.Sync;
 using UnityEngine;
 using UnityEngine.InputSystem;
 using UnityEngine.XR.Interaction.Toolkit.Samples.ARStarterAssets;
@@ -48,6 +49,15 @@ namespace HomeCare.App
         bool m_Restored;
         readonly Dictionary<string, Renderer> m_Markers = new Dictionary<string, Renderer>();
 
+        // 自動同期：カメラ画面を開いたとき・登録や完了をしたとき・開いている間は1分ごとに同期する。
+        // 家族が足した場所も、この画面を開いたまま球で出る
+        const float AutoSyncDelayAfterChange = 3f;
+        const float AutoSyncInterval = 60f;
+        float m_AutoSyncAt = -1f;
+        bool m_Syncing;
+        int m_LocalVersion;
+        string m_SyncStatus;
+
         void Awake()
         {
             m_Repository = new JsonFileHomeRepository();
@@ -77,6 +87,19 @@ namespace HomeCare.App
             Debug.Log($"[HomeCare] 保存先：{m_Repository.FilePath}");
         }
 
+        void Start()
+        {
+            RequestAutoSync(0f);
+        }
+
+        void OnApplicationPause(bool paused)
+        {
+            if (!paused)
+            {
+                RequestAutoSync(0f);
+            }
+        }
+
         void OnEnable()
         {
             if (m_Spawner != null)
@@ -99,6 +122,13 @@ namespace HomeCare.App
 
         void Update()
         {
+            // 入力画面や詳細を開いている間は、そこで使っているデータを入れ替えないよう待つ
+            if (!m_Syncing && !IsAnyViewOpen() && m_AutoSyncAt >= 0f && Time.realtimeSinceStartup >= m_AutoSyncAt)
+            {
+                m_AutoSyncAt = -1f;
+                AutoSync();
+            }
+
             if (m_Localizer != null && m_Localizer.TryGetRoomFrame(m_Room.id, out var frame))
             {
                 // 位置合わせができた時点で一度だけ、保存してあるポイントを表示する
@@ -154,6 +184,108 @@ namespace HomeCare.App
             {
                 GUI.Box(new Rect(100f, 40f, width - 110f, 36f), $"部屋のマーカー（{m_OriginMarker}）をカメラに映してください");
             }
+
+            if (!string.IsNullOrEmpty(m_SyncStatus))
+            {
+                GUI.Box(new Rect(10f, Screen.height / scale - 46f, width - 20f, 36f), m_SyncStatus);
+            }
+        }
+
+        /// <summary>少し後に自動同期する。続けて変更したときは、最後の変更から数秒待ってまとめて1回にする。</summary>
+        void RequestAutoSync(float delaySeconds)
+        {
+            if (!CloudSync.IsConfigured(out _))
+            {
+                return;
+            }
+            m_AutoSyncAt = Time.realtimeSinceStartup + delaySeconds;
+        }
+
+        async void AutoSync()
+        {
+            m_Syncing = true;
+            var versionBefore = m_LocalVersion;
+            string status;
+            try
+            {
+                // クラウドにまだ家が無ければ作らない（作るのは一覧画面の「クラウドと同期」）
+                var result = await CloudSync.SyncAsync(m_Editor.Home, createIfMissing: false);
+                if (this == null)
+                {
+                    return; // 待っている間に一覧画面へ戻った
+                }
+                if (result.Outcome == SyncOutcome.Skipped)
+                {
+                    status = null;
+                }
+                else if (result.Outcome == SyncOutcome.Failed)
+                {
+                    status = $"同期できませんでした（{DateTime.Now:H:mm}）";
+                    Debug.Log($"[HomeCare] 自動同期：{result.Message}");
+                }
+                else if (m_LocalVersion != versionBefore || IsAnyViewOpen())
+                {
+                    // 通信している間にこの画面で登録・完了した（または入力中）なので、結果は使わずに少し後でもう一度同期する
+                    status = m_SyncStatus;
+                    RequestAutoSync(AutoSyncDelayAfterChange);
+                }
+                else
+                {
+                    UseHome(result.Home);
+                    status = $"同期済み {DateTime.Now:H:mm}";
+                    Debug.Log($"[HomeCare] 自動同期：{result.Message}");
+                }
+            }
+            catch (Exception e)
+            {
+                if (this == null)
+                {
+                    return;
+                }
+                status = $"同期できませんでした（{DateTime.Now:H:mm}）";
+                Debug.Log($"[HomeCare] 自動同期：{e.Message}");
+            }
+            m_SyncStatus = status;
+            m_Syncing = false;
+            if (m_AutoSyncAt < 0f)
+            {
+                RequestAutoSync(AutoSyncInterval);
+            }
+        }
+
+        /// <summary>同期で受け取った家のデータに入れ替え、球を足したり消したり、色を塗り直したりする。</summary>
+        void UseHome(HomeData home)
+        {
+            m_Editor = new HomeEditor(home);
+            TrySave();
+            var roomId = m_Room.id;
+            m_Room = m_Editor.FindOrAddRoom(m_RoomName);
+            if (m_Room.id != roomId && m_Localizer != null)
+            {
+                m_Localizer.SetLocalizers(m_Room.id, m_Editor.LocalizersOf(m_Room.id));
+            }
+
+            var points = m_Editor.PointsInRoom(m_Room.id).ToList();
+            var current = new HashSet<string>(points.Select(p => p.id));
+            foreach (var id in m_Markers.Keys.Where(id => !current.Contains(id)).ToList())
+            {
+                Destroy(m_Markers[id].gameObject);
+                m_Markers.Remove(id);
+            }
+            // 位置合わせ前なら、合ったときにまとめて出る（Update）
+            var frame = default(RoomFrame);
+            var localized = m_Localizer != null && m_Localizer.TryGetRoomFrame(m_Room.id, out frame);
+            foreach (var point in points)
+            {
+                if (m_Markers.TryGetValue(point.id, out var renderer))
+                {
+                    renderer.material.color = StatusStyle.ColorOf(m_Editor.StatusOfPoint(point.id, DateTime.Today));
+                }
+                else if (m_Restored && localized)
+                {
+                    CreateMarker(point, WorldPositionOf(point, frame));
+                }
+            }
         }
 
         static Vector3 WorldPositionOf(PointData point, RoomFrame frame) =>
@@ -187,7 +319,7 @@ namespace HomeCare.App
         {
             var task = m_Editor.FindTask(taskId);
             m_Editor.CompleteTask(taskId, DateTime.Today);
-            if (TrySave())
+            if (SaveChange())
             {
                 Debug.Log($"[HomeCare] 「{task.title}」を完了しました。次回期限：{DataFormat.FormatDate(HomeEditor.NextDueDate(task))}");
             }
@@ -225,7 +357,7 @@ namespace HomeCare.App
                 {
                     var point = m_Editor.AddPoint(m_Room.id, input.PointName, inRoom, rotationInRoom);
                     m_Editor.AddTask(point.id, input.TaskTitle, input.Recurrence, input.FirstDueDate);
-                    if (TrySave())
+                    if (SaveChange())
                     {
                         CreateMarker(point, world);
                         Debug.Log($"[HomeCare] 「{point.name}：{input.TaskTitle}」を保存：部屋「{m_Room.name}」の座標 {inRoom}");
@@ -238,6 +370,14 @@ namespace HomeCare.App
                     Destroy(spawned);
                     EnableSpawnSoon();
                 });
+        }
+
+        /// <summary>この画面での変更（登録・完了）を保存し、少し後にクラウドへ送る。</summary>
+        bool SaveChange()
+        {
+            m_LocalVersion++;
+            RequestAutoSync(AutoSyncDelayAfterChange);
+            return TrySave();
         }
 
         bool TrySave()
