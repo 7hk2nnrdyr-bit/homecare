@@ -23,6 +23,7 @@ namespace HomeCare.Core.Firebase
         public const string Points = "points";
         public const string Tasks = "tasks";
         public const string Completions = "completions";
+        public const string Invites = "invites";
 
         private readonly FirebaseAuthClient _auth;
         private readonly FirestoreClient _db;
@@ -92,6 +93,41 @@ namespace HomeCare.Core.Firebase
             {
                 await _db.CommitAsync(writes);
             }
+        }
+
+        public async Task CreateInviteAsync(HomeInvite invite)
+        {
+            await _auth.SignInAsync();
+            await _db.CommitAsync(new[]
+            {
+                new FirestoreWrite { Document = Doc($"{Invites}/{invite.code}", RecordFields.ToFields(invite)), MustNotExist = true },
+            });
+        }
+
+        public async Task<HomeInvite> FindInviteAsync(string code)
+        {
+            var doc = await _db.GetAsync($"{Invites}/{code}");
+            return doc == null ? null : RecordFields.FromFields<HomeInvite>(doc.Fields);
+        }
+
+        /// <summary>
+        /// 家のメンバー一覧に自分を足す。どの招待で参加したかを joinCode に残し、ルールで招待が本物か確かめる。
+        /// 家のほかの項目には触れない。
+        /// </summary>
+        public async Task JoinHomeAsync(HomeInvite invite)
+        {
+            var uid = await _auth.SignInAsync();
+            await _db.CommitAsync(new[]
+            {
+                new FirestoreWrite
+                {
+                    Document = Doc($"{Homes}/{invite.homeId}", new Dictionary<string, object> { ["joinCode"] = invite.code }),
+                    OnlyFields = new List<string> { "joinCode" },
+                    MustExist = true,
+                    AppendToArrayField = "memberUids",
+                    AppendToArrayValues = new List<object> { uid },
+                },
+            });
         }
 
         async Task<List<T>> LoadListAsync<T>(string homeId, string collection) where T : new() =>

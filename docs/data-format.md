@@ -109,9 +109,11 @@ homes/{homeId}/rooms/{roomId}      … 部屋（localizers を含む）
 homes/{homeId}/points/{pointId}
 homes/{homeId}/tasks/{taskId}
 homes/{homeId}/completions/{completionId}
+invites/{code}                     … code, homeId, createdByUid, createdAt, expiresAtMillis
 ```
 
 - `ownerUid`：家を作った利用者のID。`memberUids`：家のメンバーの利用者IDの一覧。どちらもクラウドにだけある。
+- `invites`：家族を招待するコード。`expiresAtMillis` は期限（1970年1月1日からのミリ秒、UTC）。招待コードで参加すると、家の `joinCode` に使ったコードが残る。
 - 数の配列（`positionInRoom` など）は数の配列、`recurrence` は入れ子の項目（map）として保存する。
 - 日付・時刻は端末内と同じ文字列のまま保存する（並べ替えと新旧の比べ方を端末と同じにするため）。
 - 同期の合わせ方は「受け取ったデータの合わせ方」と同じ。合わせた後、クラウドと中身が違うものだけを送る。

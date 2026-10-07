@@ -14,7 +14,8 @@ namespace HomeCare.Core.Tests
     internal class FakeCloudHomeStore : ICloudHomeStore
     {
         private readonly Dictionary<string, HomeData> _homes = new Dictionary<string, HomeData>();
-        private readonly Dictionary<string, string> _owners = new Dictionary<string, string>();
+        private readonly Dictionary<string, List<string>> _members = new Dictionary<string, List<string>>();
+        private readonly Dictionary<string, HomeInvite> _invites = new Dictionary<string, HomeInvite>();
 
         public string CurrentUid = "user-a";
         public bool Offline;
@@ -33,7 +34,31 @@ namespace HomeCare.Core.Tests
             Task.FromResult(_homes.TryGetValue(homeId, out var home) ? Copy(home) : null);
 
         public Task<string> FindMyHomeIdAsync() =>
-            Task.FromResult(_owners.Where(pair => pair.Value == CurrentUid).Select(pair => pair.Key).FirstOrDefault());
+            Task.FromResult(_members.Where(pair => pair.Value.Contains(CurrentUid)).Select(pair => pair.Key).FirstOrDefault());
+
+        public IReadOnlyList<string> MembersOf(string homeId) => _members[homeId];
+
+        public Task CreateInviteAsync(HomeInvite invite)
+        {
+            if (!_members[invite.homeId].Contains(CurrentUid))
+            {
+                throw new InvalidOperationException("メンバーではありません。");
+            }
+            _invites[invite.code] = invite;
+            return Task.CompletedTask;
+        }
+
+        public Task<HomeInvite> FindInviteAsync(string code) =>
+            Task.FromResult(_invites.TryGetValue(code, out var invite) ? invite : null);
+
+        public Task JoinHomeAsync(HomeInvite invite)
+        {
+            if (!_members[invite.homeId].Contains(CurrentUid))
+            {
+                _members[invite.homeId].Add(CurrentUid);
+            }
+            return Task.CompletedTask;
+        }
 
         public Task SaveAsync(HomeChanges changes)
         {
@@ -42,7 +67,7 @@ namespace HomeCare.Core.Tests
             if (changes.IsNewHome)
             {
                 _homes[id] = new HomeData { id = id, name = changes.Home.name };
-                _owners[id] = CurrentUid;
+                _members[id] = new List<string> { CurrentUid };
             }
             var stored = _homes[id];
             Upsert(stored.rooms, changes.Rooms, r => r.id);
@@ -179,5 +204,74 @@ namespace HomeCare.Core.Tests
             Assert.Same(home, result.Home);
             Assert.Contains("通信できません", result.Message);
         }
-    }
+    
+        [Fact]
+        public async Task 招待コードで別の利用者が同じ家に参加できる()
+        {
+            var cloud = new FakeCloudHomeStore();
+            var home = HomeWithOnePoint(out _).Home;
+            var sync = new HomeSync(cloud, () => At(1));
+            await sync.SyncAsync(home);
+            var invite = await sync.CreateInviteAsync(home);
+
+            cloud.CurrentUid = "user-b";
+            var joined = await sync.JoinAsync(EmptyHome(), invite.Invite.code.ToLowerInvariant().Insert(4, "-"));
+
+            Assert.True(invite.Ok);
+            Assert.Equal(SyncOutcome.Downloaded, joined.Outcome);
+            Assert.Equal(home.id, joined.Home.id);
+            Assert.Equal(home.points.Single().positionInRoom, joined.Home.points.Single().positionInRoom);
+            Assert.Equal(new[] { "user-a", "user-b" }, cloud.MembersOf(home.id));
+        }
+
+        [Fact]
+        public async Task 期限切れの招待コードでは参加できない()
+        {
+            var cloud = new FakeCloudHomeStore();
+            var home = HomeWithOnePoint(out _).Home;
+            await new HomeSync(cloud, () => At(1)).SyncAsync(home);
+            var invite = await new HomeSync(cloud, () => At(1)).CreateInviteAsync(home);
+
+            cloud.CurrentUid = "user-b";
+            var result = await new HomeSync(cloud, () => At(1).AddHours(25)).JoinAsync(EmptyHome(), invite.Invite.code);
+
+            Assert.Equal(SyncOutcome.Failed, result.Outcome);
+            Assert.Contains("期限", result.Message);
+            Assert.Single(cloud.MembersOf(home.id));
+        }
+
+        [Fact]
+        public async Task 知らないコードや形の違うコードでは参加できない()
+        {
+            var cloud = new FakeCloudHomeStore();
+            var sync = new HomeSync(cloud);
+
+            var unknown = await sync.JoinAsync(EmptyHome(), "ABCD-EFGH");
+            var malformed = await sync.JoinAsync(EmptyHome(), "ABC");
+
+            Assert.Contains("見つかりません", unknown.Message);
+            Assert.Contains("8文字", malformed.Message);
+        }
+
+        [Fact]
+        public async Task クラウドに無い家の招待コードは作れない()
+        {
+            var result = await new HomeSync(new FakeCloudHomeStore()).CreateInviteAsync(HomeWithOnePoint(out _).Home);
+
+            Assert.False(result.Ok);
+            Assert.Contains("先に", result.Message);
+        }
+
+        [Fact]
+        public void 招待コードは見間違えやすい文字を使わない()
+        {
+            for (var i = 0; i < 200; i++)
+            {
+                var code = InviteCode.Generate();
+                Assert.Equal(8, code.Length);
+                Assert.DoesNotContain(code, c => "IO01".IndexOf(c) >= 0);
+                Assert.Equal(code, InviteCode.Normalize(InviteCode.Format(code).ToLowerInvariant()));
+            }
+        }
+}
 }
