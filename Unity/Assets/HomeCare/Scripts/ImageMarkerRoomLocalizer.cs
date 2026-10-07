@@ -10,7 +10,8 @@ namespace HomeCare.App
     /// <summary>
     /// 印刷した画像マーカーをカメラで見つけて、部屋の座標系を作る。
     /// マーカーがもう一度映るたびに位置を補正し、少しずつずれるのを防ぐ。
-    /// どのマーカーがどの部屋の基準点かは、SetLocalizers で受け取る。
+    /// どのマーカーがどの部屋の基準点かは、SetLocalizers で受け取る（部屋ごとに呼ぶ）。
+    /// 最後に映ったマーカーの部屋を「今いる部屋」とする。
     /// マーカーを探す部品（AR Tracked Image Manager）は、XR Origin に付けておく。
     /// アプリの起動と同時にマーカーを探し始める必要があるため、実行中に後から付けるのではなく、最初から付けておく。
     /// </summary>
@@ -27,6 +28,9 @@ namespace HomeCare.App
         readonly HashSet<TrackableId> m_ReportedUnknown = new HashSet<TrackableId>();
 
         ARTrackedImageManager m_Manager;
+        string m_LatestRoomId;
+
+        public override string LatestRoomId => m_LatestRoomId;
 
         void Start()
         {
@@ -77,6 +81,7 @@ namespace HomeCare.App
 
                 var isFirst = !m_Frames.ContainsKey(marker.roomId);
                 m_Frames[marker.roomId] = RoomFrame.FromObservedPose(image.transform.ToCorePose(), marker.inRoom);
+                m_LatestRoomId = marker.roomId;
                 if (isFirst)
                 {
                     Debug.Log($"[HomeCare] マーカー{markerId}で部屋の位置合わせができました。");
