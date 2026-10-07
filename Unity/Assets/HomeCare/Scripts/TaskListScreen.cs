@@ -86,6 +86,8 @@ namespace HomeCare.App
             var items = m_Editor.DueList(today);
 
             GUILayout.BeginArea(area);
+            // 受け渡しやクラウドの欄を開くと画面に収まらないことがあるので、画面全体をスクロールできるようにする
+            m_Scroll = GUILayout.BeginScrollView(m_Scroll);
             GUILayout.Label("やること一覧（期限の近い順）");
             if (GUILayout.Button("カメラで見る（場所の登録・確認）", GUILayout.Height(44f)))
             {
@@ -115,7 +117,6 @@ namespace HomeCare.App
                 GUILayout.Label("まだ何も登録されていません。「カメラで見る」から、場所とやることを登録しましょう。");
             }
 
-            m_Scroll = GUILayout.BeginScrollView(m_Scroll);
             foreach (var item in items)
             {
                 GUILayout.BeginHorizontal(GUI.skin.box);
