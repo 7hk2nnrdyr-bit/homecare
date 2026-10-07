@@ -1,4 +1,5 @@
 using System;
+using System.Linq;
 using HomeCare.Core.Data;
 using HomeCare.Core.Scheduling;
 using HomeCare.Core.Sync;
@@ -36,6 +37,20 @@ namespace HomeCare.App
         MembersResult m_Members;
         bool m_ConfirmLeave;
         MemberView m_ConfirmRemove;
+
+        // 登録した内容の修正・削除（一度に1件だけ開く）
+        string m_EditTaskId;
+        string m_EditPointName;
+        string m_EditTitle;
+        string m_EditEvery;
+        int m_EditUnitIndex;
+        string m_EditFirstDue;
+        string m_EditError;
+        bool m_ConfirmDeleteTask;
+        string m_ListMessage;
+        string m_EditRoomId;
+        string m_EditRoomName;
+        string m_ConfirmDeleteRoomId;
 
         // 自動同期：アプリを開いたとき・戻ってきたとき・この画面で変更したときに、ボタンを押さなくても同期する
         const float AutoSyncDelayAfterChange = 3f;
@@ -178,6 +193,10 @@ namespace HomeCare.App
             {
                 GUILayout.Label(m_AutoSyncStatus);
             }
+            if (!string.IsNullOrEmpty(m_ListMessage))
+            {
+                GUILayout.Label(m_ListMessage);
+            }
             if (GUILayout.Button("カメラで見る（場所の登録・確認）", GUILayout.Height(44f)))
             {
                 AppScenes.OpenCamera();
@@ -236,10 +255,185 @@ namespace HomeCare.App
                 {
                     m_PendingCompleteTaskId = item.Task.id;
                 }
+                var editing = m_EditTaskId == item.Task.id;
+                if (GUILayout.Button(editing ? "閉じる" : "修正", GUILayout.Width(64f), GUILayout.Height(40f)))
+                {
+                    if (editing)
+                    {
+                        CloseTaskEditor();
+                    }
+                    else
+                    {
+                        OpenTaskEditor(item);
+                    }
+                }
                 GUILayout.EndHorizontal();
+                if (editing)
+                {
+                    DrawTaskEditor(item);
+                }
             }
             GUILayout.EndScrollView();
             GUILayout.EndArea();
+        }
+
+        void OpenTaskEditor(DueItem item)
+        {
+            var recurrence = DataFormat.ToRecurrence(item.Task.recurrence);
+            m_EditTaskId = item.Task.id;
+            m_EditPointName = item.Point != null ? item.Point.name : "";
+            m_EditTitle = item.Task.title;
+            m_EditEvery = recurrence.Every.ToString();
+            m_EditUnitIndex = Math.Max(0, Array.IndexOf(PointForm.k_Units, recurrence.Unit));
+            m_EditFirstDue = item.Task.firstDueDate;
+            m_EditError = null;
+            m_ConfirmDeleteTask = false;
+            m_ListMessage = null;
+        }
+
+        void CloseTaskEditor()
+        {
+            m_EditTaskId = null;
+            m_EditError = null;
+            m_ConfirmDeleteTask = false;
+        }
+
+        /// <summary>一覧の行の下に出す、やることの修正・削除の欄。</summary>
+        void DrawTaskEditor(DueItem item)
+        {
+            GUILayout.BeginVertical(GUI.skin.box);
+            if (item.Point != null)
+            {
+                GUILayout.Label("場所の名前（例：エアコン）");
+                m_EditPointName = GUILayout.TextField(m_EditPointName ?? "", 30, GUILayout.Height(32f));
+            }
+            GUILayout.Label("やること（例：フィルター掃除）");
+            m_EditTitle = GUILayout.TextField(m_EditTitle ?? "", 30, GUILayout.Height(32f));
+
+            GUILayout.Label("周期");
+            GUILayout.BeginHorizontal();
+            m_EditEvery = GUILayout.TextField(m_EditEvery ?? "", 3, GUILayout.Width(50f), GUILayout.Height(32f));
+            GUILayout.Label("ごと", GUILayout.Width(30f));
+            m_EditUnitIndex = GUILayout.SelectionGrid(m_EditUnitIndex, PointForm.k_UnitLabels, PointForm.k_UnitLabels.Length,
+                GUILayout.Height(32f));
+            GUILayout.EndHorizontal();
+
+            // 一度でも完了していれば、次回期限は前回実施日から数えるので、最初の期限は使われない
+            GUILayout.Label(string.IsNullOrEmpty(item.Task.lastDoneDate)
+                ? "最初の期限（例：2026-11-03）"
+                : "最初の期限（完了したことがあるので、次回期限は前回実施日から数えます）");
+            m_EditFirstDue = GUILayout.TextField(m_EditFirstDue ?? "", 10, GUILayout.Height(32f));
+
+            if (!string.IsNullOrEmpty(m_EditError))
+            {
+                var style = new GUIStyle(GUI.skin.label) { wordWrap = true };
+                style.normal.textColor = new Color(1f, 0.45f, 0.45f);
+                GUILayout.Label(m_EditError, style);
+            }
+
+            GUILayout.BeginHorizontal();
+            if (GUILayout.Button("保存", GUILayout.Height(36f)))
+            {
+                m_PendingTransfer = SaveTaskEdit;
+            }
+            if (GUILayout.Button("やめる", GUILayout.Height(36f)))
+            {
+                CloseTaskEditor();
+            }
+            GUILayout.EndHorizontal();
+
+            GUILayout.Space(8f);
+            if (!m_ConfirmDeleteTask)
+            {
+                if (GUILayout.Button("このやることを削除", GUILayout.Height(32f)))
+                {
+                    m_ConfirmDeleteTask = true;
+                }
+            }
+            else
+            {
+                // やることの無い場所は残しても使わないので、最後の1件なら場所も一緒に消える
+                var withPoint = item.Point != null && m_Editor.TasksOfPoint(item.Point.id).Count() == 1;
+                GUILayout.Label(withPoint
+                    ? $"「{item.Task.title}」と、場所「{item.Point.name}」を削除します。実施記録も見られなくなります。"
+                    : $"「{item.Task.title}」を削除します。実施記録も見られなくなります。");
+                GUILayout.BeginHorizontal();
+                if (GUILayout.Button("削除する", GUILayout.Height(32f)))
+                {
+                    m_PendingTransfer = DeleteTask;
+                }
+                if (GUILayout.Button("やめる", GUILayout.Height(32f)))
+                {
+                    m_ConfirmDeleteTask = false;
+                }
+                GUILayout.EndHorizontal();
+            }
+            GUILayout.EndVertical();
+        }
+
+        void SaveTaskEdit()
+        {
+            var task = m_Editor.FindTask(m_EditTaskId);
+            if (task == null)
+            {
+                CloseTaskEditor();
+                m_ListMessage = "このやることは、ほかの端末で削除されました。";
+                return;
+            }
+            var point = string.IsNullOrEmpty(task.pointId) ? null : m_Editor.FindPoint(task.pointId);
+            // 場所の無いやること（古いデータ）は、場所の名前を確かめない
+            var pointName = point != null ? m_EditPointName : "-";
+            if (!TaskInput.TryCreate(pointName, m_EditTitle, m_EditEvery, PointForm.k_Units[m_EditUnitIndex], m_EditFirstDue,
+                    out var input, out m_EditError))
+            {
+                return;
+            }
+            try
+            {
+                if (point != null)
+                {
+                    m_Editor.RenamePoint(point.id, input.PointName);
+                }
+                m_Editor.UpdateTask(task.id, input.TaskTitle, input.Recurrence, input.FirstDueDate);
+                m_Repository.Save(m_Editor.Home);
+                m_ListMessage = $"「{task.title}」を修正しました。";
+                CloseTaskEditor();
+                RequestAutoSync(AutoSyncDelayAfterChange);
+            }
+            catch (ArgumentException e)
+            {
+                m_EditError = e.Message;
+            }
+            catch (Exception e)
+            {
+                m_EditError = $"保存に失敗しました：{e.Message}";
+            }
+            Debug.Log($"[HomeCare] {m_EditError ?? m_ListMessage}");
+        }
+
+        void DeleteTask()
+        {
+            var task = m_Editor.FindTask(m_EditTaskId);
+            CloseTaskEditor();
+            if (task == null)
+            {
+                return;
+            }
+            var point = string.IsNullOrEmpty(task.pointId) ? null : m_Editor.FindPoint(task.pointId);
+            try
+            {
+                var pointDeleted = m_Editor.DeleteTask(task.id);
+                m_Repository.Save(m_Editor.Home);
+                m_ListMessage = pointDeleted
+                    ? $"「{task.title}」と、場所「{point.name}」を削除しました。"
+                    : $"「{task.title}」を削除しました。";
+                RequestAutoSync(AutoSyncDelayAfterChange);
+            }
+            catch (Exception e)
+            {
+                m_ListMessage = $"削除できませんでした：{e.Message}";
+            }
+            Debug.Log($"[HomeCare] {m_ListMessage}");
         }
 
         void DrawTransfer()
@@ -277,7 +471,54 @@ namespace HomeCare.App
             GUILayout.Label("部屋ごとに印刷したマーカーを貼ります。カメラ画面では、最後に映したマーカーの部屋に登録されます。");
             foreach (var room in m_Editor.ActiveRooms())
             {
+                GUILayout.BeginHorizontal();
                 GUILayout.Label($"・{room.name}　マーカー {m_Editor.MarkerOf(room.id) ?? "なし"}");
+                if (m_EditRoomId == null && m_ConfirmDeleteRoomId == null)
+                {
+                    if (GUILayout.Button("名前を変える", GUILayout.Width(110f), GUILayout.Height(28f)))
+                    {
+                        m_EditRoomId = room.id;
+                        m_EditRoomName = room.name;
+                        m_RoomMessage = null;
+                    }
+                    if (GUILayout.Button("削除", GUILayout.Width(60f), GUILayout.Height(28f)))
+                    {
+                        m_ConfirmDeleteRoomId = room.id;
+                        m_RoomMessage = null;
+                    }
+                }
+                GUILayout.EndHorizontal();
+
+                if (m_EditRoomId == room.id)
+                {
+                    m_EditRoomName = GUILayout.TextField(m_EditRoomName ?? "", 20, GUILayout.Height(32f));
+                    GUILayout.BeginHorizontal();
+                    if (GUILayout.Button("保存", GUILayout.Height(32f)))
+                    {
+                        m_PendingTransfer = RenameRoom;
+                    }
+                    if (GUILayout.Button("やめる", GUILayout.Height(32f)))
+                    {
+                        m_EditRoomId = null;
+                    }
+                    GUILayout.EndHorizontal();
+                }
+                if (m_ConfirmDeleteRoomId == room.id)
+                {
+                    var points = m_Editor.PointsInRoom(room.id).ToList();
+                    var tasks = points.Sum(p => m_Editor.TasksOfPoint(p.id).Count());
+                    GUILayout.Label($"部屋「{room.name}」を削除します。中の場所{points.Count}件・やること{tasks}件も削除されます。");
+                    GUILayout.BeginHorizontal();
+                    if (GUILayout.Button("削除する", GUILayout.Height(32f)))
+                    {
+                        m_PendingTransfer = DeleteRoom;
+                    }
+                    if (GUILayout.Button("やめる", GUILayout.Height(32f)))
+                    {
+                        m_ConfirmDeleteRoomId = null;
+                    }
+                    GUILayout.EndHorizontal();
+                }
             }
             GUILayout.Space(8f);
             GUILayout.Label("■ 部屋を追加する（例：寝室）");
@@ -314,6 +555,77 @@ namespace HomeCare.App
                 m_RoomMessage = $"保存に失敗しました：{e.Message}";
             }
             Debug.Log($"[HomeCare] {m_RoomMessage}");
+        }
+
+        void RenameRoom()
+        {
+            var roomId = m_EditRoomId;
+            try
+            {
+                m_Editor.RenameRoom(roomId, m_EditRoomName);
+                m_Repository.Save(m_Editor.Home);
+                m_EditRoomId = null;
+                m_RoomMessage = $"部屋の名前を「{m_EditRoomName.Trim()}」にしました。";
+                RequestAutoSync(AutoSyncDelayAfterChange);
+            }
+            catch (ArgumentException e)
+            {
+                m_RoomMessage = e.Message;
+            }
+            catch (Exception e)
+            {
+                m_RoomMessage = $"保存に失敗しました：{e.Message}";
+            }
+            Debug.Log($"[HomeCare] {m_RoomMessage}");
+        }
+
+        void DeleteRoom()
+        {
+            var roomId = m_ConfirmDeleteRoomId;
+            m_ConfirmDeleteRoomId = null;
+            var room = m_Editor.ActiveRooms().FirstOrDefault(r => r.id == roomId);
+            if (room == null)
+            {
+                return;
+            }
+            var marker = m_Editor.MarkerOf(room.id);
+            try
+            {
+                m_Editor.DeleteRoom(room.id);
+                m_Repository.Save(m_Editor.Home);
+                m_RoomMessage = $"部屋「{room.name}」を削除しました。" +
+                    (marker != null ? $"マーカー{marker}は、次に追加する部屋で使われます（貼ってあるマーカーははがしてください）。" : "");
+                RequestAutoSync(AutoSyncDelayAfterChange);
+            }
+            catch (ArgumentException e)
+            {
+                m_RoomMessage = e.Message;
+            }
+            catch (Exception e)
+            {
+                m_RoomMessage = $"削除できませんでした：{e.Message}";
+            }
+            Debug.Log($"[HomeCare] {m_RoomMessage}");
+        }
+
+        /// <summary>
+        /// 家のデータを入れ替えたあと（同期・参加・端末の切り替えなど）、開いていた修正の欄の相手が
+        /// もう無ければ閉じる（ほかの端末で削除されたときなど）。
+        /// </summary>
+        void ForgetMissingEdits()
+        {
+            if (m_EditTaskId != null && m_Editor.FindTask(m_EditTaskId) == null)
+            {
+                CloseTaskEditor();
+            }
+            if (m_EditRoomId != null && !m_Editor.ActiveRooms().Any(r => r.id == m_EditRoomId))
+            {
+                m_EditRoomId = null;
+            }
+            if (m_ConfirmDeleteRoomId != null && !m_Editor.ActiveRooms().Any(r => r.id == m_ConfirmDeleteRoomId))
+            {
+                m_ConfirmDeleteRoomId = null;
+            }
         }
 
         void DrawCloud()
@@ -525,6 +837,7 @@ namespace HomeCare.App
                     m_Repository.Delete();
                     m_Editor = HomeEditor.LoadOrCreate(m_Repository, "わが家");
                     m_Members = null;
+                    ForgetMissingEdits();
                 }
             }
             catch (Exception e)
@@ -570,6 +883,7 @@ namespace HomeCare.App
         {
             m_Repository.Save(home);
             m_Editor = new HomeEditor(home);
+            ForgetMissingEdits();
         }
 
         async void CreateInvite()
@@ -643,6 +957,7 @@ namespace HomeCare.App
             DeviceSlot.Toggle();
             m_Repository = new JsonFileHomeRepository();
             m_Editor = HomeEditor.LoadOrCreate(m_Repository, "わが家");
+            ForgetMissingEdits();
             m_InviteText = null;
             m_ConfirmJoin = false;
             m_Members = null;
@@ -685,6 +1000,7 @@ namespace HomeCare.App
             m_Repository.Delete();
             m_Editor = HomeEditor.LoadOrCreate(m_Repository, "わが家");
             m_Members = null;
+            ForgetMissingEdits();
             m_CloudMessage = "この端末の家のデータを消しました。「クラウドと同期」でクラウドから取得できます。";
             Debug.Log($"[HomeCare] {m_CloudMessage}");
         }
@@ -711,6 +1027,7 @@ namespace HomeCare.App
                 {
                     m_Repository.Save(result.Home);
                     m_Editor = new HomeEditor(result.Home);
+                    ForgetMissingEdits();
                     RequestAutoSync(AutoSyncDelayAfterChange);
                 }
                 catch (Exception e)
