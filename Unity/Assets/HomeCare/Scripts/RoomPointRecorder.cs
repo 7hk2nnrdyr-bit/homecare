@@ -15,7 +15,9 @@ namespace HomeCare.App
     /// <summary>
     /// タップで物が置かれたら入力画面を出し、名前・やること・周期とともに、
     /// 位置を部屋の座標に変換してファイルに保存する。
-    /// 部屋の位置合わせができたら、保存してあるポイントを同じ場所に、期限の状態の色（赤・黄・緑）の球で表示する。
+    /// 部屋ごとにマーカー（M01、M02…）があり、マーカーが映った部屋の位置合わせができたら、
+    /// その部屋のポイントを同じ場所に、期限の状態の色（赤・黄・緑）の球で表示する。
+    /// 新しいポイントは、最後にマーカーが映った部屋（今いる部屋）に登録する。
     /// 球をタップすると詳細を開き、完了を記録できる。
     /// </summary>
     public class RoomPointRecorder : MonoBehaviour
@@ -28,11 +30,11 @@ namespace HomeCare.App
         [SerializeField]
         RoomLocalizer m_Localizer;
 
-        [Tooltip("ポイントを記録する部屋の名前。無ければ自動で作る。")]
+        [Tooltip("部屋がまだ1つも無いときに作る、最初の部屋の名前。")]
         [SerializeField]
         string m_RoomName = "リビング";
 
-        [Tooltip("部屋に基準点がまだ無いとき、原点として登録するマーカー番号。")]
+        [Tooltip("最初の部屋の原点にするマーカー番号。")]
         [SerializeField]
         string m_OriginMarker = "M01";
 
@@ -45,8 +47,8 @@ namespace HomeCare.App
         PointDetailView m_Detail;
         ARInteractorSpawnTrigger m_SpawnTrigger;
         HomeEditor m_Editor;
-        RoomData m_Room;
-        bool m_Restored;
+        // 球をもう出した部屋（位置合わせができた時点で、その部屋の球をまとめて出す）
+        readonly HashSet<string> m_RestoredRooms = new HashSet<string>();
         readonly Dictionary<string, Renderer> m_Markers = new Dictionary<string, Renderer>();
 
         // 自動同期：カメラ画面を開いたとき・登録や完了をしたとき・開いている間は1分ごとに同期する。
@@ -62,17 +64,13 @@ namespace HomeCare.App
         {
             m_Repository = new JsonFileHomeRepository();
             m_Editor = HomeEditor.LoadOrCreate(m_Repository, "わが家");
-            m_Room = m_Editor.FindOrAddRoom(m_RoomName);
-            if (!m_Editor.LocalizersOf(m_Room.id).Any())
+            if (!m_Editor.ActiveRooms().Any())
             {
-                // 最初のマーカーを部屋の原点にする
-                m_Editor.AddMarkerLocalizer(m_Room.id, m_OriginMarker, Vec3.Zero, 0f);
+                // 部屋がまだ無ければ、最初の部屋を作り、最初のマーカーをその原点にする
+                m_Editor.AddRoomWithMarker(m_RoomName, MarkerCatalog.Ids.Prepend(m_OriginMarker).Distinct());
                 TrySave();
             }
-            if (m_Localizer != null)
-            {
-                m_Localizer.SetLocalizers(m_Room.id, m_Editor.LocalizersOf(m_Room.id));
-            }
+            RegisterLocalizers();
             m_Form = GetComponent<PointForm>();
             if (m_Form == null)
             {
@@ -129,21 +127,26 @@ namespace HomeCare.App
                 AutoSync();
             }
 
-            if (m_Localizer != null && m_Localizer.TryGetRoomFrame(m_Room.id, out var frame))
+            foreach (var room in m_Editor.ActiveRooms())
             {
-                // 位置合わせができた時点で一度だけ、保存してあるポイントを表示する
-                if (!m_Restored)
+                if (m_Localizer == null || !m_Localizer.TryGetRoomFrame(room.id, out var frame))
                 {
-                    foreach (var point in m_Editor.PointsInRoom(m_Room.id))
+                    continue;
+                }
+                // 位置合わせができた時点で一度だけ、その部屋の保存してあるポイントを表示する
+                if (m_RestoredRooms.Add(room.id))
+                {
+                    var count = 0;
+                    foreach (var point in m_Editor.PointsInRoom(room.id))
                     {
                         CreateMarker(point, WorldPositionOf(point, frame));
+                        count++;
                     }
-                    m_Restored = true;
-                    Debug.Log($"[HomeCare] 保存してあるポイント{m_Markers.Count}個を表示しました（部屋「{m_Room.name}」）。");
+                    Debug.Log($"[HomeCare] 保存してあるポイント{count}個を表示しました（部屋「{room.name}」）。");
                 }
 
                 // マーカーが映るたびに部屋の座標が補正されるので、球の位置も合わせ直す
-                foreach (var point in m_Editor.PointsInRoom(m_Room.id))
+                foreach (var point in m_Editor.PointsInRoom(room.id))
                 {
                     if (m_Markers.TryGetValue(point.id, out var renderer))
                     {
@@ -179,11 +182,13 @@ namespace HomeCare.App
                 return;
             }
 
-            // 位置合わせができるまでは、マーカーを映すよう案内する
-            if (m_Localizer != null && !m_Localizer.TryGetRoomFrame(m_Room.id, out _))
-            {
-                GUI.Box(new Rect(100f, 40f, width - 110f, 36f), $"部屋のマーカー（{m_OriginMarker}）をカメラに映してください");
-            }
+            // 位置合わせができるまでは、マーカーを映すよう案内する。できたら、今いる部屋を出す
+            var current = CurrentRoom(out _);
+            var guide = current == null
+                ? "部屋のマーカーをカメラに映してください（" +
+                  string.Join("、", m_Editor.ActiveRooms().Select(r => $"{m_Editor.MarkerOf(r.id)}：{r.name}")) + "）"
+                : $"今の部屋：{current.name}（{m_Editor.MarkerOf(current.id)}）";
+            GUI.Box(new Rect(100f, 40f, width - 110f, 36f), guide);
 
             if (!string.IsNullOrEmpty(m_SyncStatus))
             {
@@ -258,34 +263,71 @@ namespace HomeCare.App
         {
             m_Editor = new HomeEditor(home);
             TrySave();
-            var roomId = m_Room.id;
-            m_Room = m_Editor.FindOrAddRoom(m_RoomName);
-            if (m_Room.id != roomId && m_Localizer != null)
-            {
-                m_Localizer.SetLocalizers(m_Room.id, m_Editor.LocalizersOf(m_Room.id));
-            }
+            // 家族が足した部屋のマーカーも見分けられるようにする
+            RegisterLocalizers();
 
-            var points = m_Editor.PointsInRoom(m_Room.id).ToList();
-            var current = new HashSet<string>(points.Select(p => p.id));
+            var current = new HashSet<string>(m_Editor.ActiveRooms().SelectMany(r => m_Editor.PointsInRoom(r.id)).Select(p => p.id));
             foreach (var id in m_Markers.Keys.Where(id => !current.Contains(id)).ToList())
             {
                 Destroy(m_Markers[id].gameObject);
                 m_Markers.Remove(id);
             }
-            // 位置合わせ前なら、合ったときにまとめて出る（Update）
-            var frame = default(RoomFrame);
-            var localized = m_Localizer != null && m_Localizer.TryGetRoomFrame(m_Room.id, out frame);
-            foreach (var point in points)
+            foreach (var room in m_Editor.ActiveRooms())
             {
-                if (m_Markers.TryGetValue(point.id, out var renderer))
+                // 位置合わせ前の部屋は、合ったときにまとめて出る（Update）
+                if (!m_RestoredRooms.Contains(room.id) || m_Localizer == null || !m_Localizer.TryGetRoomFrame(room.id, out var frame))
                 {
-                    renderer.material.color = StatusStyle.ColorOf(m_Editor.StatusOfPoint(point.id, DateTime.Today));
+                    continue;
                 }
-                else if (m_Restored && localized)
+                foreach (var point in m_Editor.PointsInRoom(room.id))
                 {
-                    CreateMarker(point, WorldPositionOf(point, frame));
+                    if (m_Markers.TryGetValue(point.id, out var renderer))
+                    {
+                        renderer.material.color = StatusStyle.ColorOf(m_Editor.StatusOfPoint(point.id, DateTime.Today));
+                    }
+                    else
+                    {
+                        CreateMarker(point, WorldPositionOf(point, frame));
+                    }
                 }
             }
+        }
+
+        /// <summary>どのマーカーがどの部屋かを、位置合わせの部品に教える。</summary>
+        void RegisterLocalizers()
+        {
+            if (m_Localizer == null)
+            {
+                return;
+            }
+            foreach (var room in m_Editor.ActiveRooms())
+            {
+                m_Localizer.SetLocalizers(room.id, m_Editor.LocalizersOf(room.id));
+            }
+        }
+
+        /// <summary>
+        /// 今いる部屋（最後にマーカーが映った部屋）と、その部屋の座標系。
+        /// どの部屋も位置合わせができていなければ null。
+        /// </summary>
+        RoomData CurrentRoom(out RoomFrame frame)
+        {
+            frame = default;
+            if (m_Localizer == null)
+            {
+                return null;
+            }
+            var latest = m_Localizer.LatestRoomId;
+            var rooms = m_Editor.ActiveRooms().ToList();
+            // 最後に映った部屋を優先し、分からなければ（仮の位置合わせ部品など）位置合わせできた最初の部屋
+            foreach (var room in rooms.OrderBy(r => r.id == latest ? 0 : 1))
+            {
+                if (m_Localizer.TryGetRoomFrame(room.id, out frame))
+                {
+                    return room;
+                }
+            }
+            return null;
         }
 
         static Vector3 WorldPositionOf(PointData point, RoomFrame frame) =>
@@ -339,9 +381,10 @@ namespace HomeCare.App
                 Destroy(spawned);
                 return;
             }
-            if (m_Localizer == null || !m_Localizer.TryGetRoomFrame(m_Room.id, out var frame))
+            var room = CurrentRoom(out var frame);
+            if (room == null)
             {
-                Debug.LogWarning($"[HomeCare] まだ位置合わせができていないため、置けません。先にマーカー（{m_OriginMarker}）を映してください。");
+                Debug.LogWarning("[HomeCare] まだ位置合わせができていないため、置けません。先に部屋のマーカーを映してください。");
                 Destroy(spawned);
                 return;
             }
@@ -355,12 +398,12 @@ namespace HomeCare.App
             m_Form.Open(
                 input =>
                 {
-                    var point = m_Editor.AddPoint(m_Room.id, input.PointName, inRoom, rotationInRoom);
+                    var point = m_Editor.AddPoint(room.id, input.PointName, inRoom, rotationInRoom);
                     m_Editor.AddTask(point.id, input.TaskTitle, input.Recurrence, input.FirstDueDate);
                     if (SaveChange())
                     {
                         CreateMarker(point, world);
-                        Debug.Log($"[HomeCare] 「{point.name}：{input.TaskTitle}」を保存：部屋「{m_Room.name}」の座標 {inRoom}");
+                        Debug.Log($"[HomeCare] 「{point.name}：{input.TaskTitle}」を保存：部屋「{room.name}」の座標 {inRoom}");
                     }
                     Destroy(spawned);
                     EnableSpawnSoon();

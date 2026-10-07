@@ -21,6 +21,9 @@ namespace HomeCare.App
         bool m_ShowTransfer;
         string m_TransferMessage;
         bool m_ShowCloud;
+        bool m_ShowRooms;
+        string m_NewRoomName = "";
+        string m_RoomMessage;
         bool m_Syncing;
 #if UNITY_EDITOR
         bool m_ConfirmDelete;
@@ -189,6 +192,15 @@ namespace HomeCare.App
                 DrawTransfer();
             }
 
+            if (GUILayout.Button(m_ShowRooms ? "部屋とマーカー ▲" : "部屋とマーカー ▼", GUILayout.Height(32f)))
+            {
+                m_ShowRooms = !m_ShowRooms;
+            }
+            if (m_ShowRooms)
+            {
+                DrawRooms();
+            }
+
             if (GUILayout.Button(m_ShowCloud ? "クラウド ▲" : "クラウド ▼", GUILayout.Height(32f)))
             {
                 m_ShowCloud = !m_ShowCloud;
@@ -257,6 +269,51 @@ namespace HomeCare.App
                 GUILayout.Label(m_TransferMessage);
             }
             GUILayout.EndVertical();
+        }
+
+        void DrawRooms()
+        {
+            GUILayout.BeginVertical(GUI.skin.box);
+            GUILayout.Label("部屋ごとに印刷したマーカーを貼ります。カメラ画面では、最後に映したマーカーの部屋に登録されます。");
+            foreach (var room in m_Editor.ActiveRooms())
+            {
+                GUILayout.Label($"・{room.name}　マーカー {m_Editor.MarkerOf(room.id) ?? "なし"}");
+            }
+            GUILayout.Space(8f);
+            GUILayout.Label("■ 部屋を追加する（例：寝室）");
+            m_NewRoomName = GUILayout.TextField(m_NewRoomName ?? "", 20, GUILayout.Height(32f));
+            if (GUILayout.Button("部屋を追加", GUILayout.Height(36f)))
+            {
+                m_PendingTransfer = AddRoom;
+            }
+            if (!string.IsNullOrEmpty(m_RoomMessage))
+            {
+                GUILayout.Label(m_RoomMessage);
+            }
+            GUILayout.EndVertical();
+        }
+
+        void AddRoom()
+        {
+            try
+            {
+                var room = m_Editor.AddRoomWithMarker(m_NewRoomName, MarkerCatalog.Ids);
+                m_Repository.Save(m_Editor.Home);
+                var marker = m_Editor.MarkerOf(room.id);
+                m_RoomMessage = $"部屋「{room.name}」を追加しました。マーカー{marker}を印刷して、{room.name}の壁などに貼ってください" +
+                    $"（印刷用：markers/{marker}-print.pdf）。";
+                m_NewRoomName = "";
+                RequestAutoSync(AutoSyncDelayAfterChange);
+            }
+            catch (ArgumentException e)
+            {
+                m_RoomMessage = e.Message;
+            }
+            catch (Exception e)
+            {
+                m_RoomMessage = $"保存に失敗しました：{e.Message}";
+            }
+            Debug.Log($"[HomeCare] {m_RoomMessage}");
         }
 
         void DrawCloud()

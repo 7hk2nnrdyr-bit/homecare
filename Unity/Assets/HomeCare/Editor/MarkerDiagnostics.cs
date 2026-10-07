@@ -65,6 +65,47 @@ namespace HomeCare.EditorTools
             Debug.Log(log.ToString());
         }
 
+        /// <summary>
+        /// XR Simulationの仮想の部屋の壁に貼るマーカーを、次の番号（M01→M02→…→M10→M01）に替える。
+        /// 部屋を増やしたときに、別の部屋のマーカーが映ったつもりで試すため。次に再生したときから変わる。
+        /// </summary>
+        [MenuItem("HomeCare/XR Simulationのマーカーを次の番号にする")]
+        static void NextSimulationMarker() => SetSimulationMarker(next: true);
+
+        [MenuItem("HomeCare/XR Simulationのマーカーを M01 に戻す")]
+        static void ResetSimulationMarker() => SetSimulationMarker(next: false);
+
+        static void SetSimulationMarker(bool next)
+        {
+            var root = PrefabUtility.LoadPrefabContents(k_EnvironmentPath);
+            try
+            {
+                var simulated = root.GetComponentInChildren<SimulatedTrackedImage>(true);
+                if (simulated == null)
+                {
+                    Debug.LogWarning("[HomeCare] 仮想マーカーが見つかりません。");
+                    return;
+                }
+                var image = new SerializedObject(simulated);
+                var texture = image.FindProperty("m_Image");
+                var current = texture.objectReferenceValue != null ? texture.objectReferenceValue.name : "M01";
+                var number = 1;
+                if (next && current.StartsWith("M") && int.TryParse(current.Substring(1), out var n))
+                {
+                    number = n % 10 + 1;
+                }
+                var markerId = $"M{number:00}";
+                texture.objectReferenceValue = AssetDatabase.LoadAssetAtPath<Texture2D>($"Assets/HomeCare/Markers/{markerId}.png");
+                image.ApplyModifiedPropertiesWithoutUndo();
+                PrefabUtility.SaveAsPrefabAsset(root, k_EnvironmentPath);
+                Debug.Log($"[HomeCare] XR Simulationの壁のマーカーを {markerId} にしました。次に再生したときから使われます。");
+            }
+            finally
+            {
+                PrefabUtility.UnloadPrefabContents(root);
+            }
+        }
+
         static string Describe(Object obj) =>
             obj == null ? "なし" : $"{obj.name}（{AssetDatabase.GetAssetPath(obj)}）";
     }

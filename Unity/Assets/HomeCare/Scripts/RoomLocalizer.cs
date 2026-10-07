@@ -24,5 +24,11 @@ namespace HomeCare.App
         public virtual void SetLocalizers(string roomId, IEnumerable<LocalizerData> localizers)
         {
         }
+
+        /// <summary>
+        /// いちばん最近、基準点が見えた部屋のID（今いる部屋のつもり）。分からなければ null。
+        /// マーカー版は、最後にカメラに映ったマーカーの部屋を返す。
+        /// </summary>
+        public virtual string LatestRoomId => null;
     }
 }

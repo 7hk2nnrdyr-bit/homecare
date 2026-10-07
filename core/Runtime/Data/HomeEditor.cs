@@ -92,6 +92,40 @@ namespace HomeCare.Core.Data
 
         public IEnumerable<LocalizerData> LocalizersOf(string roomId) => RequireRoom(roomId).localizers;
 
+        /// <summary>部屋の原点のマーカー番号（最初に登録したマーカー）。マーカーが無ければ null。</summary>
+        public string MarkerOf(string roomId) =>
+            RequireRoom(roomId).localizers.Where(l => l.type == "marker").Select(l => l.markerId).FirstOrDefault();
+
+        /// <summary>まだどの部屋でも使っていないマーカー番号を、並び順で返す。</summary>
+        public IEnumerable<string> UnusedMarkerIds(IEnumerable<string> available)
+        {
+            var used = new HashSet<string>(ActiveRooms().SelectMany(r => r.localizers).Select(l => l.markerId));
+            return available.Where(id => !used.Contains(id));
+        }
+
+        /// <summary>
+        /// 部屋を足し、まだ使っていないマーカーを1つ割り当てて、その部屋の原点にする。
+        /// 名前が空・同じ名前の部屋がある・使えるマーカーが残っていないときは断る。
+        /// </summary>
+        /// <param name="available">アプリに入っているマーカー番号（例：M01〜M10）。</param>
+        public RoomData AddRoomWithMarker(string name, IEnumerable<string> available)
+        {
+            name = (name ?? "").Trim();
+            if (name.Length == 0)
+            {
+                throw new ArgumentException("部屋の名前を入れてください。");
+            }
+            if (ActiveRooms().Any(r => r.name == name))
+            {
+                throw new ArgumentException($"部屋「{name}」はもうあります。");
+            }
+            var markerId = UnusedMarkerIds(available).FirstOrDefault()
+                ?? throw new ArgumentException("使えるマーカーが残っていません（全部で10個）。");
+            var room = AddRoom(name);
+            AddMarkerLocalizer(room.id, markerId, Vec3.Zero, 0f);
+            return room;
+        }
+
         public PointData AddPoint(string roomId, string name, Vec3 positionInRoom, Quat? rotationInRoom = null)
         {
             RequireRoom(roomId);
