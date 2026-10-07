@@ -42,6 +42,10 @@ namespace HomeCare.App
         [SerializeField]
         float m_MarkerSize = 0.05f;
 
+        [Tooltip("「目の前に置く」で、最初にカメラから何m先に置くか。")]
+        [SerializeField]
+        float m_PlaceDistance = 1f;
+
         JsonFileHomeRepository m_Repository;
         PointForm m_Form;
         PointDetailView m_Detail;
@@ -57,6 +61,13 @@ namespace HomeCare.App
         const float AutoSyncInterval = 60f;
         float m_AutoSyncAt = -1f;
         bool m_Syncing;
+
+        // 「目の前に置く」：面が見つからない物（白い壁・エアコン・棚の上など）にも登録できるようにする。
+        // カメラの前に仮の球を出し、距離を変えてから登録する
+        const float MinPlaceDistance = 0.2f;
+        const float MaxPlaceDistance = 4f;
+        GameObject m_Preview;
+        float m_PreviewDistance;
         int m_LocalVersion;
         string m_SyncStatus;
 
@@ -157,9 +168,25 @@ namespace HomeCare.App
                 }
             }
 
+            // 「目の前に置く」の仮の球は、カメラの向いている先に置き続ける
+            if (m_Preview != null)
+            {
+                var camera = Camera.main;
+                if (camera == null)
+                {
+                    CancelPreview();
+                }
+                else
+                {
+                    m_Preview.transform.SetPositionAndRotation(
+                        camera.transform.position + camera.transform.forward * m_PreviewDistance,
+                        Quaternion.Euler(0f, camera.transform.eulerAngles.y, 0f));
+                }
+            }
+
             // 球をタップしたら詳細を開く
             var pointer = Pointer.current;
-            if (pointer != null && pointer.press.wasPressedThisFrame && !IsAnyViewOpen()
+            if (pointer != null && pointer.press.wasPressedThisFrame && !IsAnyViewOpen() && m_Preview == null
                 && TryGetTappedMarker(pointer.position.ReadValue(), out var marker))
             {
                 OpenDetail(marker.PointId);
@@ -190,10 +217,95 @@ namespace HomeCare.App
                 : $"今の部屋：{current.name}（{m_Editor.MarkerOf(current.id)}）";
             GUI.Box(new Rect(100f, 40f, width - 110f, 36f), guide);
 
+            var height = Screen.height / scale;
+            var bottom = height - 56f;
+            if (m_Preview == null)
+            {
+                // 面をタップできないとき（白い壁・家電・棚の上など）は、このボタンで目の前に置ける
+                if (current != null && GUI.Button(new Rect(10f, bottom, width - 20f, 46f), "目の前に置く"))
+                {
+                    StartPreview(current);
+                }
+            }
+            else
+            {
+                GUI.Box(new Rect(10f, bottom - 84f, width - 20f, 36f),
+                    $"登録したい物にスマホを向けてください（{m_PreviewDistance:0.0}m先）");
+                var third = (width - 20f) / 3f;
+                if (GUI.Button(new Rect(10f, bottom - 44f, third - 4f, 40f), "近づける"))
+                {
+                    m_PreviewDistance = Mathf.Max(MinPlaceDistance, m_PreviewDistance - 0.1f);
+                }
+                if (GUI.Button(new Rect(10f + third, bottom - 44f, third - 4f, 40f), "遠ざける"))
+                {
+                    m_PreviewDistance = Mathf.Min(MaxPlaceDistance, m_PreviewDistance + 0.1f);
+                }
+                if (GUI.Button(new Rect(10f + third * 2f, bottom - 44f, third - 4f, 40f), "やめる"))
+                {
+                    CancelPreview();
+                    return;
+                }
+                if (GUI.Button(new Rect(10f, bottom, width - 20f, 46f), "ここに登録"))
+                {
+                    RegisterPreview(current);
+                    return;
+                }
+            }
+
             if (!string.IsNullOrEmpty(m_SyncStatus))
             {
-                GUI.Box(new Rect(10f, Screen.height / scale - 46f, width - 20f, 36f), m_SyncStatus);
+                GUI.Box(new Rect(10f, 86f, width - 20f, 36f), m_SyncStatus);
             }
+        }
+
+        /// <summary>カメラの前に仮の球を出す。登録するまで、カメラの向きに合わせて動き続ける。</summary>
+        void StartPreview(RoomData room)
+        {
+            var camera = Camera.main;
+            if (camera == null)
+            {
+                return;
+            }
+            // 仮の球を置いている間は、画面をタップしても物が置かれないようにする
+            SetSpawnEnabled(false);
+            m_PreviewDistance = Mathf.Clamp(m_PlaceDistance, MinPlaceDistance, MaxPlaceDistance);
+            m_Preview = GameObject.CreatePrimitive(PrimitiveType.Sphere);
+            m_Preview.name = "Preview";
+            m_Preview.transform.localScale = Vector3.one * m_MarkerSize;
+            // 仮の球は、タップで詳細が開かないよう当たり判定を外す
+            Destroy(m_Preview.GetComponent<SphereCollider>());
+            m_Preview.GetComponent<Renderer>().material.color = Color.white;
+            Debug.Log($"[HomeCare] 目の前に置く：部屋「{room.name}」");
+        }
+
+        void CancelPreview()
+        {
+            if (m_Preview != null)
+            {
+                Destroy(m_Preview);
+                m_Preview = null;
+            }
+            EnableSpawnSoon();
+        }
+
+        /// <summary>仮の球の場所を、新しいポイントとして登録する。</summary>
+        void RegisterPreview(RoomData room)
+        {
+            var preview = m_Preview;
+            m_Preview = null;
+            if (preview == null)
+            {
+                return;
+            }
+            // 登録する直前にマーカーを見失ったときは、部屋の座標に直せないので、置き直してもらう
+            if (room == null || !m_Localizer.TryGetRoomFrame(room.id, out var frame))
+            {
+                Destroy(preview);
+                EnableSpawnSoon();
+                Debug.LogWarning("[HomeCare] 位置合わせができていないため、登録できませんでした。マーカーを映してからやり直してください。");
+                return;
+            }
+            OpenFormFor(room, frame, preview.transform.position, preview.transform.rotation, preview);
         }
 
         /// <summary>少し後に自動同期する。続けて変更したときは、最後の変更から数秒待ってまとめて1回にする。</summary>
@@ -389,9 +501,15 @@ namespace HomeCare.App
                 return;
             }
 
-            var world = spawned.transform.position;
+            OpenFormFor(room, frame, spawned.transform.position, spawned.transform.rotation, spawned);
+        }
+
+        /// <summary>置いた場所を部屋の座標に直し、名前とやることの入力画面を出す。</summary>
+        /// <param name="placed">置いてある仮の物。登録しても取り消しても消す（代わりに保存した球を出す）。</param>
+        void OpenFormFor(RoomData room, RoomFrame frame, Vector3 world, Quaternion rotation, GameObject placed)
+        {
             var inRoom = frame.WorldToRoom(world.ToCore());
-            var rotationInRoom = frame.WorldToRoom(spawned.transform.rotation.ToCore());
+            var rotationInRoom = frame.WorldToRoom(rotation.ToCore());
 
             // 入力中に画面をタップしても、物が置かれないようにする
             SetSpawnEnabled(false);
@@ -405,12 +523,12 @@ namespace HomeCare.App
                         CreateMarker(point, world);
                         Debug.Log($"[HomeCare] 「{point.name}：{input.TaskTitle}」を保存：部屋「{room.name}」の座標 {inRoom}");
                     }
-                    Destroy(spawned);
+                    Destroy(placed);
                     EnableSpawnSoon();
                 },
                 () =>
                 {
-                    Destroy(spawned);
+                    Destroy(placed);
                     EnableSpawnSoon();
                 });
         }
